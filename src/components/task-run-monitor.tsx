@@ -39,6 +39,8 @@ const labels: Record<string, string> = {
   execution_timeout: "Analiz zaman aşımına uğradı.",
   protected_branch_violation: "Güvenlik kuralı: Korumalı ana dala yazılamaz.",
   invalid_branch_format: "Geçersiz dal adı formatı.",
+  github_write_credential_missing:
+    "GitHub yazma kimlik bilgisi (GITHUB_TOKEN) sunucuda eksik.",
   github_write_permission_denied: "GitHub repository yazma izni yetersiz.",
   coding_workspace_error: "Kodlama çalışma alanı hazırlanamadı.",
 };

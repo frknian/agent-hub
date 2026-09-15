@@ -25,6 +25,8 @@ const workspaceMocks = vi.hoisted(() => ({
   createCodingBranch: vi.fn(),
   readFileFromBranch: vi.fn(),
   createBranchCommit: vi.fn(),
+  getGitHubWriteToken: vi.fn(),
+  validateRepositoryWriteAccess: vi.fn(),
 }));
 
 vi.mock("./github-workspace", async (importOriginal) => {
@@ -35,6 +37,8 @@ vi.mock("./github-workspace", async (importOriginal) => {
     createCodingBranch: workspaceMocks.createCodingBranch,
     readFileFromBranch: workspaceMocks.readFileFromBranch,
     createBranchCommit: workspaceMocks.createBranchCommit,
+    getGitHubWriteToken: workspaceMocks.getGitHubWriteToken,
+    validateRepositoryWriteAccess: workspaceMocks.validateRepositoryWriteAccess,
   };
 });
 
@@ -79,6 +83,9 @@ const userId = "00000000-0000-4000-8000-000000000001";
 
 beforeEach(() => {
   vi.resetAllMocks();
+
+  workspaceMocks.getGitHubWriteToken.mockReturnValue("mock-write-token-secret");
+  workspaceMocks.validateRepositoryWriteAccess.mockResolvedValue(true);
 
   dbMocks.select.mockReturnValue({
     from: () => ({
@@ -187,7 +194,101 @@ it("rejects coding run when Qwen provider is not connected", async () => {
   );
 });
 
-it("executes coding run, validates safe files, commits to branch, and emits events in exact order", async () => {
+it("rejects coding run when GitHub write token is missing", async () => {
+  dbMocks.limit
+    .mockResolvedValueOnce([
+      {
+        id: taskId,
+        title: "Fix bug",
+        description: "route error",
+        projectId: "p1",
+        repositoryUrl: "https://github.com/example/repo",
+      },
+    ])
+    .mockResolvedValueOnce([
+      {
+        id: "primary-run-id",
+        status: "completed",
+        resultJson: JSON.stringify({ summary: "analyzed" }),
+      },
+    ])
+    .mockResolvedValueOnce([]) // reviewer
+    .mockResolvedValueOnce([]) // active
+    .mockResolvedValueOnce([
+      {
+        id: "cred-1",
+        provider: "qwen",
+        status: "connected",
+        encryptedApiKey: "enc",
+        iv: "iv",
+        authTag: "tag",
+      },
+    ]);
+
+  workspaceMocks.getGitHubWriteToken.mockImplementationOnce(() => {
+    throw new Error("github_write_credential_missing");
+  });
+
+  await expect(startCodingExecution(userId, taskId)).rejects.toThrow(
+    "github_write_credential_missing",
+  );
+
+  expect(dbMocks.set).toHaveBeenCalledWith(
+    expect.objectContaining({
+      status: "failed",
+      errorCode: "github_write_credential_missing",
+    }),
+  );
+});
+
+it("rejects coding run when target repo write permission is denied", async () => {
+  dbMocks.limit
+    .mockResolvedValueOnce([
+      {
+        id: taskId,
+        title: "Fix bug",
+        description: "route error",
+        projectId: "p1",
+        repositoryUrl: "https://github.com/example/repo",
+      },
+    ])
+    .mockResolvedValueOnce([
+      {
+        id: "primary-run-id",
+        status: "completed",
+        resultJson: JSON.stringify({ summary: "analyzed" }),
+      },
+    ])
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([
+      {
+        id: "cred-1",
+        provider: "qwen",
+        status: "connected",
+        encryptedApiKey: "enc",
+        iv: "iv",
+        authTag: "tag",
+      },
+    ]);
+
+  workspaceMocks.validateRepositoryWriteAccess.mockRejectedValueOnce(
+    new Error("github_write_permission_denied"),
+  );
+
+  await expect(startCodingExecution(userId, taskId)).rejects.toThrow(
+    "github_write_permission_denied",
+  );
+
+  expect(dbMocks.set).toHaveBeenCalledWith(
+    expect.objectContaining({
+      status: "failed",
+      errorCode: "github_write_permission_denied",
+    }),
+  );
+});
+
+it("executes coding run, validates safe files, commits to branch, passes token, and never leaks secrets", async () => {
   dbMocks.limit
     .mockResolvedValueOnce([
       {
@@ -274,9 +375,13 @@ it("executes coding run, validates safe files, commits to branch, and emits even
   });
 
   const insertedEvents: string[] = [];
+  const insertedEventMetadatas: (string | null)[] = [];
   dbMocks.values.mockImplementation((vals: Record<string, unknown>) => {
     if (typeof vals.eventType === "string") {
       insertedEvents.push(vals.eventType);
+      insertedEventMetadatas.push(
+        typeof vals.metadataJson === "string" ? vals.metadataJson : null,
+      );
     }
     return { returning: async () => [{ id: "coding-run-id" }] };
   });
@@ -299,6 +404,19 @@ it("executes coding run, validates safe files, commits to branch, and emits even
     "coding_completed",
   ]);
 
+  // Token is verified to have been passed to GitHub write operations
+  expect(workspaceMocks.validateRepositoryWriteAccess).toHaveBeenCalledWith(
+    "owner",
+    "repo",
+    "mock-write-token-secret",
+  );
+  expect(workspaceMocks.createCodingBranch).toHaveBeenCalledWith(
+    "owner",
+    "repo",
+    "agent/task-d52fda24-fix-auth-route",
+    "base-sha-123456",
+    "mock-write-token-secret",
+  );
   expect(workspaceMocks.createBranchCommit).toHaveBeenCalledWith({
     owner: "owner",
     repo: "repo",
@@ -310,13 +428,20 @@ it("executes coding run, validates safe files, commits to branch, and emits even
         content: "export const auth = true;",
       },
     ],
+    token: "mock-write-token-secret",
   });
 
-  // Verify final run status and metadata
+  // Verify that secret token was NEVER written to event metadata or DB result
+  for (const metadata of insertedEventMetadatas) {
+    if (metadata) {
+      expect(metadata).not.toContain("mock-write-token-secret");
+    }
+  }
+
   expect(dbMocks.set).toHaveBeenCalledWith(
     expect.objectContaining({
       status: "completed",
-      resultJson: expect.stringContaining("commit-sha-777"),
+      resultJson: expect.not.stringContaining("mock-write-token-secret"),
     }),
   );
 });

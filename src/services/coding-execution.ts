@@ -19,6 +19,8 @@ import {
   createCodingBranch,
   createBranchCommit,
   readFileFromBranch,
+  getGitHubWriteToken,
+  validateRepositoryWriteAccess,
 } from "./github-workspace";
 import {
   buildCodingContext,
@@ -32,6 +34,8 @@ import {
 
 export const codingEventMessages: Record<string, string> = {
   coding_requested: "Kodlama talep edildi",
+  github_write_credential_missing: "GitHub yazma kimlik bilgisi eksik",
+  github_write_permission_denied: "GitHub repository yazma izni yetersiz",
   repository_write_access_validated: "Repository yazma erişimi doğrulandı",
   base_branch_resolved: "Base branch doğrulandı",
   coding_branch_created: "Kodlama branch'i oluşturuldu",
@@ -206,9 +210,13 @@ export async function startCodingExecution(userId: string, taskId: string) {
     await event("coding_requested");
 
     const { owner, repo } = parsePublicRepository(task.repositoryUrl);
+
+    // 4. Resolve server-side GitHub write token and validate repo write access
+    const token = getGitHubWriteToken();
+    await validateRepositoryWriteAccess(owner, repo, token);
     await event("repository_write_access_validated");
 
-    const base = await resolveBaseBranch(owner, repo);
+    const base = await resolveBaseBranch(owner, repo, token);
     await event("base_branch_resolved", "completed", {
       branch: base.branch,
       sha: base.sha,
@@ -221,6 +229,7 @@ export async function startCodingExecution(userId: string, taskId: string) {
       repo,
       branchName,
       base.sha,
+      token,
     );
     await event("coding_branch_created", "completed", {
       branch: branchRes.branch,
@@ -358,6 +367,7 @@ export async function startCodingExecution(userId: string, taskId: string) {
         repo,
         branchRes.branch,
         change.path,
+        token,
       );
       const oldContent = existing?.content ?? "";
       const fileDiff = generateSimpleDiff(
@@ -389,6 +399,7 @@ export async function startCodingExecution(userId: string, taskId: string) {
         path: c.path,
         content: c.content,
       })),
+      token,
     });
 
     await event("coding_commit_created", "completed", {
@@ -446,13 +457,15 @@ export async function startCodingExecution(userId: string, taskId: string) {
           ? "invalid_branch_format"
           : message.startsWith("Dosya güvenlik kuralı ihlali")
             ? "forbidden_file_modification"
-            : message === "github_write_permission_denied"
-              ? "github_write_permission_denied"
-              : message === "repository_not_found"
-                ? "repository_not_found"
-                : message === "provider_not_connected"
-                  ? "provider_not_connected"
-                  : "coding_failed";
+            : message === "github_write_credential_missing"
+              ? "github_write_credential_missing"
+              : message === "github_write_permission_denied"
+                ? "github_write_permission_denied"
+                : message === "repository_not_found"
+                  ? "repository_not_found"
+                  : message === "provider_not_connected"
+                    ? "provider_not_connected"
+                    : "coding_failed";
 
     await db
       .update(taskRuns)

@@ -7,6 +7,8 @@ import {
   createCodingBranch,
   readFileFromBranch,
   createBranchCommit,
+  getGitHubWriteToken,
+  validateRepositoryWriteAccess,
   slugify,
 } from "./github-workspace";
 
@@ -265,4 +267,117 @@ it("detects branch conflict (422) on ref update", async () => {
       changes: [{ path: "file.txt", content: "hello" }],
     }),
   ).rejects.toThrow("coding_conflict");
+});
+
+it("resolves write token from environment and throws when missing", () => {
+  const original = process.env.GITHUB_TOKEN;
+  try {
+    delete process.env.GITHUB_TOKEN;
+    expect(() => getGitHubWriteToken()).toThrow(
+      "github_write_credential_missing",
+    );
+
+    process.env.GITHUB_TOKEN = "  ";
+    expect(() => getGitHubWriteToken()).toThrow(
+      "github_write_credential_missing",
+    );
+
+    process.env.GITHUB_TOKEN = "ghp_secret123456";
+    expect(getGitHubWriteToken()).toBe("ghp_secret123456");
+  } finally {
+    process.env.GITHUB_TOKEN = original;
+  }
+});
+
+it("validates repository write access correctly", async () => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    const authHeader = (init?.headers as Record<string, string>)?.Authorization;
+    expect(authHeader).toBe("Bearer test-token");
+
+    if (url.includes("/repos/owner/writable")) {
+      return new Response(
+        JSON.stringify({ permissions: { push: true, admin: false } }),
+        { status: 200 },
+      );
+    }
+    if (url.includes("/repos/owner/readonly")) {
+      return new Response(
+        JSON.stringify({ permissions: { push: false, admin: false } }),
+        { status: 200 },
+      );
+    }
+    if (url.includes("/repos/owner/denied")) {
+      return new Response(null, { status: 403 });
+    }
+    if (url.includes("/repos/owner/notfound")) {
+      return new Response(null, { status: 404 });
+    }
+    return new Response(null, { status: 500 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  await expect(
+    validateRepositoryWriteAccess("owner", "writable", "test-token"),
+  ).resolves.toBe(true);
+
+  await expect(
+    validateRepositoryWriteAccess("owner", "readonly", "test-token"),
+  ).rejects.toThrow("github_write_permission_denied");
+
+  await expect(
+    validateRepositoryWriteAccess("owner", "denied", "test-token"),
+  ).rejects.toThrow("github_write_permission_denied");
+
+  await expect(
+    validateRepositoryWriteAccess("owner", "notfound", "test-token"),
+  ).rejects.toThrow("repository_not_found");
+});
+
+it("passes Authorization header when creating branch and commit with token", async () => {
+  const capturedAuthHeaders: string[] = [];
+
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    const auth = (init?.headers as Record<string, string>)?.Authorization;
+    if (auth) capturedAuthHeaders.push(auth);
+
+    if (url.includes("/git/ref/heads/")) {
+      return new Response(JSON.stringify({ object: { sha: "head-sha" } }), {
+        status: 200,
+      });
+    }
+    if (url.includes("/git/refs") && init?.method === "POST") {
+      return new Response(JSON.stringify({ object: { sha: "new-sha" } }), {
+        status: 201,
+      });
+    }
+    if (url.includes("/git/commits/head-sha")) {
+      return new Response(JSON.stringify({ tree: { sha: "tree-sha" } }), {
+        status: 200,
+      });
+    }
+    if (url.includes("/git/trees")) {
+      return new Response(JSON.stringify({ sha: "tree-sha" }), { status: 201 });
+    }
+    if (url.includes("/git/commits")) {
+      return new Response(JSON.stringify({ sha: "commit-sha" }), {
+        status: 201,
+      });
+    }
+    if (url.includes("/git/refs/heads/")) {
+      return new Response(JSON.stringify({ object: { sha: "commit-sha" } }), {
+        status: 200,
+      });
+    }
+    return new Response(null, { status: 404 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  await createCodingBranch(
+    "owner",
+    "repo",
+    "agent/task-test-branch",
+    "base-sha",
+    "secret-token-xyz",
+  );
+  expect(capturedAuthHeaders).toContain("Bearer secret-token-xyz");
 });

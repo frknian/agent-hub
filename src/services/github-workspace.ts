@@ -94,6 +94,42 @@ async function githubApi(
   return response;
 }
 
+export function getGitHubWriteToken(): string {
+  const token = process.env.GITHUB_TOKEN?.trim();
+  if (!token) {
+    throw new Error("github_write_credential_missing");
+  }
+  return token;
+}
+
+export async function validateRepositoryWriteAccess(
+  owner: string,
+  repo: string,
+  token: string,
+): Promise<boolean> {
+  const res = await githubApi(`/repos/${owner}/${repo}`, { token });
+  if (res.status === 404) {
+    throw new Error("repository_not_found");
+  }
+  if (res.status === 401 || res.status === 403) {
+    throw new Error("github_write_permission_denied");
+  }
+  if (!res.ok) {
+    throw new Error("github_access_error");
+  }
+
+  const data = (await res.json()) as {
+    permissions?: { push?: boolean; admin?: boolean };
+  };
+
+  const hasWrite = Boolean(data.permissions?.push || data.permissions?.admin);
+  if (!hasWrite) {
+    throw new Error("github_write_permission_denied");
+  }
+
+  return true;
+}
+
 export async function resolveBaseBranch(
   owner: string,
   repo: string,
