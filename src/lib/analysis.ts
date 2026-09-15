@@ -25,6 +25,7 @@ export const executionErrorCodes = [
   "model_invalid_response",
   "network_error",
   "execution_timeout",
+  "analysis_grounding_failed",
 ] as const;
 export type ExecutionErrorCode = (typeof executionErrorCodes)[number];
 
@@ -132,4 +133,44 @@ export async function validateWithRepair(
 
 export function parseAnalysisResponse(content: string): AnalysisResult {
   return parseStructuredResponse(content, analysisResult);
+}
+
+export function validateAnalysisFiles(
+  relevantFiles: { path: string; reason: string }[],
+  validFilePaths: string[],
+): {
+  valid: { path: string; reason: string }[];
+  invalid: string[];
+} {
+  const pathSet = new Set(
+    validFilePaths.map((p) => p.trim().replace(/^\.\//, "")),
+  );
+  const valid: { path: string; reason: string }[] = [];
+  const invalid: string[] = [];
+
+  for (const file of relevantFiles) {
+    const normalized = file.path.trim().replace(/^\.\//, "");
+    if (pathSet.has(normalized)) {
+      valid.push({ path: normalized, reason: file.reason });
+    } else {
+      invalid.push(file.path);
+    }
+  }
+
+  return { valid, invalid };
+}
+
+export function formatCompactTree(paths: string[], max = 350): string {
+  if (paths.length <= max) {
+    return paths.join("\n");
+  }
+
+  // Prioritize source code files
+  const sourceExt =
+    /\.(tsx?|jsx?|kt|kts|swift|java|py|go|rs|css|scss|vue|html)$/i;
+  const sourcePaths = paths.filter((p) => sourceExt.test(p));
+  const otherPaths = paths.filter((p) => !sourceExt.test(p));
+
+  const selected = [...sourcePaths, ...otherPaths].slice(0, max);
+  return selected.join("\n");
 }

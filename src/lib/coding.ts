@@ -184,10 +184,13 @@ Return ONLY valid JSON matching this schema:
 STRICT RULES:
 1. Return ONLY the JSON object. No markdown wrapping outside the JSON, no explanations outside JSON.
 2. DELETE and RENAME operations are strictly FORBIDDEN. Only "update" and "create" are allowed.
-3. For "update", provide the FULL, complete file content. Do not use placeholders like "// ...rest of code".
-4. Never modify .git, node_modules, .env, or credential files.
-5. Use Turkish for summary, notes, risks, and reasons.
-6. Address all root causes identified in the primary analysis and adhere to Kimi's review recommendations.`;
+3. For "update": You may UPDATE ONLY files explicitly listed in 'allowed_existing_files'. Never invent file paths that do not exist in the repository tree.
+4. For "create": Only create new files if genuinely necessary for the task. The file path must NOT already exist in the repository tree or branch.
+5. Never change "update" to "create" for existing files. Never invent non-existent files for "update".
+6. For "update", provide the FULL, complete file content. Do not use placeholders like "// ...rest of code".
+7. Never modify .git, node_modules, .env, or credential files.
+8. Use Turkish for summary, notes, risks, and reasons.
+9. Address all root causes identified in the primary analysis and adhere to Kimi's review recommendations.`;
 
 export function buildCodingContext(input: {
   task: { title: string; description: string };
@@ -195,6 +198,7 @@ export function buildCodingContext(input: {
   analysis: Record<string, unknown>;
   review?: Record<string, unknown> | null;
   files: { path: string; content: string }[];
+  allowedExistingFiles?: string[];
 }): string {
   let remainingChars = 24_000;
   const selectedFiles = input.files.slice(0, 6).map((file) => {
@@ -207,9 +211,13 @@ export function buildCodingContext(input: {
     };
   });
 
+  const allowedExistingFiles =
+    input.allowedExistingFiles ?? input.files.map((f) => f.path);
+
   return JSON.stringify({
     task: input.task,
     repository: input.repository,
+    allowed_existing_files: allowedExistingFiles,
     primary_analysis: {
       summary: input.analysis.summary,
       root_causes: input.analysis.root_causes,

@@ -994,3 +994,347 @@ it("throws and marks run as failed when forbidden file (.env) is targeted", asyn
     }),
   );
 });
+
+it("Hedefit regression: eliminates hallucinated Vue files, recovers with real repo files, and validates allowlist", async () => {
+  dbMocks.limit
+    .mockResolvedValueOnce([
+      {
+        id: taskId,
+        title: "Bug fix + rota planlama UX düzeltmesi",
+        description: "Dönüşlü rota düzeltmesi",
+        projectId: "proj-1",
+        repositoryUrl: "https://github.com/frknian/hedefit",
+      },
+    ])
+    .mockResolvedValueOnce([
+      {
+        id: "run-primary-1",
+        resultJson: JSON.stringify({
+          task_type: "bug_fix",
+          summary: "Rota UX analizi",
+          root_causes: ["Harita geç yükleniyor"],
+          relevant_files: [
+            {
+              path: "app/routes/components/PlanScreen.vue",
+              reason: "Hallucinated Vue file",
+            },
+            {
+              path: "app/routes/services/MapService.ts",
+              reason: "Hallucinated service file",
+            },
+          ],
+          implementation_plan: ["PlanScreen.vue düzenle"],
+          risks: [],
+          test_plan: [],
+          confidence: 0.8,
+        }),
+      },
+    ])
+    .mockResolvedValueOnce([]) // reviewerRun
+    .mockResolvedValueOnce([]) // activeCoding
+    .mockResolvedValueOnce([
+      {
+        encryptedApiKey: "mock-enc",
+        iv: "mock-iv",
+        authTag: "mock-tag",
+        keyHint: "qwen",
+        baseUrl: null,
+      },
+    ]);
+
+  dbMocks.returning.mockResolvedValueOnce([
+    {
+      id: "run-coding-hedefit",
+      userId,
+      taskId,
+      agentRole: "coding",
+      provider: "qwen",
+      model: "qwen3-coder-next",
+      status: "running",
+    },
+  ]);
+
+  workspaceMocks.resolveBaseBranch.mockResolvedValueOnce({
+    branch: "main",
+    sha: "base-sha-123",
+  });
+  workspaceMocks.createCodingBranch.mockResolvedValueOnce({
+    branch: "agent/task-d52fda24-rota-fix",
+    sha: "branch-sha-123",
+    created: true,
+  });
+
+  const realRepoPaths = [
+    "components/RouteHistoryCard.tsx",
+    "lib/gps-tracking.ts",
+    "app/page.tsx",
+  ];
+
+  githubPublicMocks.readRepository.mockResolvedValueOnce({
+    owner: "frknian",
+    repo: "hedefit",
+    branch: "main",
+    treeCount: 3,
+    allFilePaths: realRepoPaths,
+    files: [
+      {
+        path: "components/RouteHistoryCard.tsx",
+        size: 120,
+        content: "export const RouteHistoryCard = () => null;",
+      },
+    ],
+  });
+
+  workspaceMocks.readFileFromBranch.mockResolvedValueOnce({
+    content: "export const RouteHistoryCard = () => null;",
+    sha: "blob-sha-route",
+  });
+
+  providerMocks.createCompletion.mockResolvedValueOnce({
+    choices: [
+      {
+        finish_reason: "stop",
+        message: {
+          content: JSON.stringify({
+            summary: "Rota kartı güncellendi",
+            changes: [
+              {
+                path: "components/RouteHistoryCard.tsx",
+                operation: "update",
+                content:
+                  "export const RouteHistoryCard = () => <div>Updated Route</div>;",
+                reason: "Dönüşlü rota desteği eklendi",
+              },
+            ],
+            notes: ["Gerçek repo dosyası güncellendi"],
+            risks: [],
+            suggested_tests: ["npm test"],
+          }),
+        },
+      },
+    ],
+  });
+
+  workspaceMocks.createBranchCommit.mockResolvedValueOnce({
+    commitSha: "commit-sha-real",
+    branch: "agent/task-d52fda24-rota-fix",
+  });
+
+  const runId = await startCodingExecution(userId, taskId);
+  expect(runId).toBe("run-coding-hedefit");
+
+  // Verify context received allowed_existing_files containing only real repo files
+  const promptArg = providerMocks.createCompletion.mock.calls[0][2];
+  const parsedContext = JSON.parse(promptArg);
+  expect(parsedContext.allowed_existing_files).toContain(
+    "components/RouteHistoryCard.tsx",
+  );
+  expect(parsedContext.allowed_existing_files).not.toContain(
+    "app/routes/components/PlanScreen.vue",
+  );
+  expect(parsedContext.allowed_existing_files).not.toContain(
+    "app/routes/services/MapService.ts",
+  );
+});
+
+it("rejects coding run when model attempts to update a hallucinated path not in repository tree", async () => {
+  dbMocks.limit
+    .mockResolvedValueOnce([
+      {
+        id: taskId,
+        title: "Bug fix",
+        description: "Desc",
+        projectId: "proj-1",
+        repositoryUrl: "https://github.com/frknian/hedefit",
+      },
+    ])
+    .mockResolvedValueOnce([
+      {
+        id: "run-primary-1",
+        resultJson: JSON.stringify({
+          task_type: "bug_fix",
+          summary: "Analiz",
+          root_causes: [],
+          relevant_files: [],
+          implementation_plan: [],
+          risks: [],
+          test_plan: [],
+          confidence: 0.8,
+        }),
+      },
+    ])
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([
+      {
+        encryptedApiKey: "mock-enc",
+        iv: "mock-iv",
+        authTag: "mock-tag",
+        keyHint: "qwen",
+        baseUrl: null,
+      },
+    ]);
+
+  dbMocks.returning.mockResolvedValueOnce([
+    {
+      id: "run-coding-fail",
+      userId,
+      taskId,
+      agentRole: "coding",
+      provider: "qwen",
+      model: "qwen3-coder-next",
+      status: "running",
+    },
+  ]);
+
+  workspaceMocks.resolveBaseBranch.mockResolvedValueOnce({
+    branch: "main",
+    sha: "base-sha-123",
+  });
+  workspaceMocks.createCodingBranch.mockResolvedValueOnce({
+    branch: "agent/task-d52fda24-test",
+    sha: "branch-sha-123",
+    created: true,
+  });
+
+  githubPublicMocks.readRepository.mockResolvedValueOnce({
+    owner: "frknian",
+    repo: "hedefit",
+    branch: "main",
+    treeCount: 2,
+    allFilePaths: ["components/RealFile.tsx"],
+    files: [{ path: "components/RealFile.tsx", size: 10, content: "real" }],
+  });
+
+  // Model returns update on non-existent file
+  providerMocks.createCompletion.mockResolvedValue({
+    choices: [
+      {
+        finish_reason: "stop",
+        message: {
+          content: JSON.stringify({
+            summary: "Hallucinated update",
+            changes: [
+              {
+                path: "app/routes/components/PlanScreen.vue",
+                operation: "update",
+                content: "<template></template>",
+                reason: "hallucinated",
+              },
+            ],
+            notes: [],
+            risks: [],
+            suggested_tests: [],
+          }),
+        },
+      },
+    ],
+  });
+
+  workspaceMocks.readFileFromBranch.mockResolvedValue(null);
+
+  await expect(startCodingExecution(userId, taskId)).rejects.toThrow(
+    /coding_output_invalid/i,
+  );
+});
+
+it("supports creating a valid new file and rejects create if file already exists in repo tree", async () => {
+  dbMocks.limit
+    .mockResolvedValueOnce([
+      {
+        id: taskId,
+        title: "Bug fix",
+        description: "Desc",
+        projectId: "proj-1",
+        repositoryUrl: "https://github.com/frknian/hedefit",
+      },
+    ])
+    .mockResolvedValueOnce([
+      {
+        id: "run-primary-1",
+        resultJson: JSON.stringify({
+          task_type: "bug_fix",
+          summary: "Analiz",
+          root_causes: [],
+          relevant_files: [],
+          implementation_plan: [],
+          risks: [],
+          test_plan: [],
+          confidence: 0.8,
+        }),
+      },
+    ])
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([
+      {
+        encryptedApiKey: "mock-enc",
+        iv: "mock-iv",
+        authTag: "mock-tag",
+        keyHint: "qwen",
+        baseUrl: null,
+      },
+    ]);
+
+  dbMocks.returning.mockResolvedValueOnce([
+    {
+      id: "run-coding-create",
+      userId,
+      taskId,
+      agentRole: "coding",
+      provider: "qwen",
+      model: "qwen3-coder-next",
+      status: "running",
+    },
+  ]);
+
+  workspaceMocks.resolveBaseBranch.mockResolvedValueOnce({
+    branch: "main",
+    sha: "base-sha-123",
+  });
+  workspaceMocks.createCodingBranch.mockResolvedValueOnce({
+    branch: "agent/task-d52fda24-test",
+    sha: "branch-sha-123",
+    created: true,
+  });
+
+  githubPublicMocks.readRepository.mockResolvedValueOnce({
+    owner: "frknian",
+    repo: "hedefit",
+    branch: "main",
+    treeCount: 1,
+    allFilePaths: ["components/RealFile.tsx"],
+    files: [{ path: "components/RealFile.tsx", size: 10, content: "real" }],
+  });
+
+  // Model creates a file that ALREADY exists in allFilePaths
+  providerMocks.createCompletion.mockResolvedValue({
+    choices: [
+      {
+        finish_reason: "stop",
+        message: {
+          content: JSON.stringify({
+            summary: "Invalid create",
+            changes: [
+              {
+                path: "components/RealFile.tsx",
+                operation: "create",
+                content: "new content",
+                reason: "should not be created because it exists",
+              },
+            ],
+            notes: [],
+            risks: [],
+            suggested_tests: [],
+          }),
+        },
+      },
+    ],
+  });
+
+  workspaceMocks.readFileFromBranch.mockResolvedValue(null);
+
+  await expect(startCodingExecution(userId, taskId)).rejects.toThrow(
+    /coding_output_invalid/i,
+  );
+});

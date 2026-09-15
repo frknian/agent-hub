@@ -3,6 +3,8 @@ import {
   parseAnalysisResponse,
   validateWithRepair,
   analysisDiagnostics,
+  validateAnalysisFiles,
+  formatCompactTree,
 } from "./analysis";
 
 const result = {
@@ -99,4 +101,64 @@ it("does not repair already valid output", async () => {
     },
     () => {},
   );
+});
+
+it("validates analyst paths against repository tree (valid, hallucinated, mixed, zero)", () => {
+  const tree = [
+    "components/RouteHistoryCard.tsx",
+    "lib/gps-tracking.ts",
+    "app/page.tsx",
+  ];
+
+  // 1. Valid repo paths
+  const validFiles = [
+    {
+      path: "components/RouteHistoryCard.tsx",
+      reason: "Route history display",
+    },
+    { path: "./lib/gps-tracking.ts", reason: "GPS service" },
+  ];
+  const res1 = validateAnalysisFiles(validFiles, tree);
+  expect(res1.valid).toHaveLength(2);
+  expect(res1.valid[1].path).toBe("lib/gps-tracking.ts");
+  expect(res1.invalid).toHaveLength(0);
+
+  // 2. Hallucinated paths
+  const hallucinatedFiles = [
+    { path: "app/routes/components/PlanScreen.vue", reason: "Vue screen" },
+    { path: "app/routes/services/MapService.ts", reason: "Vue service" },
+  ];
+  const res2 = validateAnalysisFiles(hallucinatedFiles, tree);
+  expect(res2.valid).toHaveLength(0);
+  expect(res2.invalid).toEqual([
+    "app/routes/components/PlanScreen.vue",
+    "app/routes/services/MapService.ts",
+  ]);
+
+  // 3. Mixed valid + invalid paths
+  const mixedFiles = [
+    { path: "app/page.tsx", reason: "Home page" },
+    { path: "components/FakeComponent.tsx", reason: "Not in repo" },
+  ];
+  const res3 = validateAnalysisFiles(mixedFiles, tree);
+  expect(res3.valid).toEqual([{ path: "app/page.tsx", reason: "Home page" }]);
+  expect(res3.invalid).toEqual(["components/FakeComponent.tsx"]);
+
+  // 4. Zero valid paths
+  const res4 = validateAnalysisFiles([], tree);
+  expect(res4.valid).toHaveLength(0);
+  expect(res4.invalid).toHaveLength(0);
+});
+
+it("formats compact repository tree prioritizing source code", () => {
+  const paths = [
+    "README.md",
+    "components/RouteHistoryCard.tsx",
+    ".gitignore",
+    "lib/gps-tracking.ts",
+  ];
+  const formatted = formatCompactTree(paths, 2);
+  expect(formatted).toContain("components/RouteHistoryCard.tsx");
+  expect(formatted).toContain("lib/gps-tracking.ts");
+  expect(formatted).not.toContain("README.md");
 });

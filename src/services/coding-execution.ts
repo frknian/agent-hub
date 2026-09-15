@@ -243,11 +243,62 @@ export async function startCodingExecution(userId: string, taskId: string) {
       baseSha: base.sha,
     });
 
-    // 6. Read relevant repository files for context
+    // 6. Read relevant repository files for context with candidate ranking
+    const rawRelevantFiles = Array.isArray(analysisData.relevant_files)
+      ? (analysisData.relevant_files as { path?: string }[])
+          .map((f) => f.path)
+          .filter((p): p is string => typeof p === "string")
+      : [];
+
     const repoContent = await readRepository(
       task.repositoryUrl,
       `${task.title} ${task.description}`,
+      {
+        preferredPaths: rawRelevantFiles,
+        token,
+      },
     );
+
+    // Validate relevant_files against actual repository tree & safe recovery
+    const allRepoPaths =
+      repoContent.allFilePaths ?? (repoContent.files ?? []).map((f) => f.path);
+    const repoTreeSet = new Set(allRepoPaths);
+    let validatedRelevantFiles: { path: string; reason: string }[] = [];
+    if (Array.isArray(analysisData.relevant_files)) {
+      validatedRelevantFiles = (
+        analysisData.relevant_files as { path?: string; reason?: string }[]
+      )
+        .filter(
+          (f): f is { path: string; reason: string } =>
+            typeof f?.path === "string" &&
+            repoTreeSet.has(f.path.trim().replace(/^\.\//, "")),
+        )
+        .map((f) => ({
+          path: f.path.trim().replace(/^\.\//, ""),
+          reason: f.reason ?? "",
+        }));
+    }
+
+    // Safe recovery: if previous analysis had hallucinated files or zero valid files,
+    // use real candidate files from repository ranking
+    if (
+      validatedRelevantFiles.length === 0 &&
+      (repoContent.files ?? []).length > 0
+    ) {
+      validatedRelevantFiles = repoContent.files.slice(0, 5).map((f) => ({
+        path: f.path,
+        reason: "Repository tree ranking ile belirlenen gerçek kaynak dosyası.",
+      }));
+    }
+
+    analysisData.relevant_files = validatedRelevantFiles;
+
+    const allowedExistingFiles = Array.from(
+      new Set([
+        ...(repoContent.files ?? []).map((f) => f.path),
+        ...validatedRelevantFiles.map((f) => f.path),
+      ]),
+    ).filter((p) => repoTreeSet.has(p));
 
     const contextPayload = buildCodingContext({
       task: { title: task.title, description: task.description },
@@ -255,6 +306,7 @@ export async function startCodingExecution(userId: string, taskId: string) {
       analysis: analysisData,
       review: reviewData,
       files: repoContent.files,
+      allowedExistingFiles,
     });
 
     await event("coding_context_prepared", "completed", {
@@ -295,8 +347,10 @@ export async function startCodingExecution(userId: string, taskId: string) {
       completionTokens: rawResponse.usage?.completion_tokens,
     });
 
-    // Helper function to validate file existence on branch (update must exist, create must not exist)
+    // Helper function to validate file existence on branch and allowlist
+    const allowedSet = new Set(allowedExistingFiles);
     const validateFileOperations = async (changes: CodingResult["changes"]) => {
+      const errors: string[] = [];
       for (const change of changes) {
         const existing = await readFileFromBranch(
           owner,
@@ -305,16 +359,28 @@ export async function startCodingExecution(userId: string, taskId: string) {
           change.path,
           token,
         );
-        if (change.operation === "update" && !existing) {
-          throw new Error(
-            `coding_output_invalid: 'update' target file does not exist on branch: ${change.path}`,
-          );
+
+        if (change.operation === "update") {
+          if (!existing || !repoTreeSet.has(change.path)) {
+            errors.push(
+              `'update' error: file does not exist on branch or repository: '${change.path}'.`,
+            );
+          } else if (!allowedSet.has(change.path)) {
+            errors.push(
+              `'update' error: file '${change.path}' is not in allowed_existing_files.`,
+            );
+          }
+        } else if (change.operation === "create") {
+          if (existing || repoTreeSet.has(change.path)) {
+            errors.push(
+              `'create' error: file already exists on branch or repository: '${change.path}'.`,
+            );
+          }
         }
-        if (change.operation === "create" && existing) {
-          throw new Error(
-            `coding_output_invalid: 'create' target file already exists on branch: ${change.path}`,
-          );
-        }
+      }
+
+      if (errors.length > 0) {
+        throw new Error(`coding_output_invalid:\n${errors.join("\n")}`);
       }
     };
 
@@ -327,6 +393,15 @@ export async function startCodingExecution(userId: string, taskId: string) {
         );
       }
       codingResult = parseCodingResponse(patchContent);
+
+      // Check forbidden files immediately (security policy, non-repairable)
+      for (const change of codingResult.changes) {
+        const safety = validateFileSafety(change.path);
+        if (!safety.allowed) {
+          throw new Error(safety.reason ?? "Dosya güvenlik kuralı ihlali");
+        }
+      }
+
       await validateFileOperations(codingResult.changes);
     } catch (firstError) {
       const errorMsg =
@@ -335,25 +410,26 @@ export async function startCodingExecution(userId: string, taskId: string) {
       // If forbidden file or branch violation was caught, rethrow immediately
       if (
         errorMsg.includes("forbidden_operation") ||
-        errorMsg.includes("protected_branch_violation")
+        errorMsg.includes("protected_branch_violation") ||
+        errorMsg.includes("Dosya güvenlik kuralı")
       ) {
         throw firstError;
       }
 
-      // One bounded repair attempt
-      const repairPrompt = `Return ONLY valid JSON matching exactly this schema:
-{"summary":string,"changes":[{"path":string,"operation":"update"|"create","content":string,"reason":string}],"notes":string[],"risks":string[],"suggested_tests":string[]}
-
-CRITICAL RULES:
-1. Return ONLY the JSON object. No Markdown fences, no explanation before or after.
-2. 'operation' must be 'update' (for files that already exist in the repo) or 'create' (for new files).
-3. 'delete' and 'rename' operations are strictly forbidden.
-4. For each change, provide the COMPLETE new file content in 'content'.
-5. VALIDATION ERROR TO REPAIR:
+      // One bounded repair attempt with targeted allowed files and all invalid paths
+      const repairPrompt = `The previous code changes failed validation:
 ${errorMsg}
 
-PREVIOUS INVALID RESPONSE:
-${patchContent.slice(0, 20_000)}`;
+ALLOWED FILES FOR 'update':
+${allowedExistingFiles.map((f) => `- ${f}`).join("\n")}
+
+CRITICAL INSTRUCTIONS:
+1. You may UPDATE ONLY files listed in ALLOWED FILES FOR 'update'.
+2. If you need a new file, operation must be 'create' and the file must not already exist in the repository.
+3. NEVER invent file paths or use 'update' on files not in ALLOWED FILES.
+4. Output ONLY valid JSON matching this schema:
+{"summary":string,"changes":[{"path":string,"operation":"update"|"create","content":string,"reason":string}],"notes":string[],"risks":string[],"suggested_tests":string[]}
+5. Return ONLY the JSON object. No Markdown fences, no explanation before or after.`;
 
       try {
         const repairResponse = (await getProviderAdapter(
@@ -363,7 +439,7 @@ ${patchContent.slice(0, 20_000)}`;
           modelName,
           repairPrompt,
           credential.baseUrl,
-          "You are a strict JSON fixer. Output ONLY a valid JSON object conforming to the required schema. No Markdown.",
+          "You are a strict JSON fixer. Fix file paths and operations according to the allowed files list. Output ONLY valid JSON matching the schema. No Markdown.",
           { maxTokens: 8192 },
         )) as typeof rawResponse;
 
