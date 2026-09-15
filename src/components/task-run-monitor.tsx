@@ -1,6 +1,6 @@
 "use client";
 import { useActionState, useEffect, useState } from "react";
-import { startAnalysis } from "@/app/actions";
+import { startAnalysis, startCodingRun } from "@/app/actions";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 type Run = {
@@ -16,7 +16,8 @@ type Run = {
   estimatedCost: string | null;
   resultJson: string | null;
   errorCode: string | null;
-  reviewer?: Omit<Run, "events" | "reviewer"> | null;
+  reviewer?: Omit<Run, "events" | "reviewer" | "coding"> | null;
+  coding?: Omit<Run, "events" | "reviewer" | "coding"> | null;
   events: {
     id: string;
     eventType: string;
@@ -36,6 +37,10 @@ const labels: Record<string, string> = {
   model_invalid_response: "Model geçerli analiz sonucu döndürmedi.",
   network_error: "Ağ hatası oluştu.",
   execution_timeout: "Analiz zaman aşımına uğradı.",
+  protected_branch_violation: "Güvenlik kuralı: Korumalı ana dala yazılamaz.",
+  invalid_branch_format: "Geçersiz dal adı formatı.",
+  github_write_permission_denied: "GitHub repository yazma izni yetersiz.",
+  coding_workspace_error: "Kodlama çalışma alanı hazırlanamadı.",
 };
 export function TaskRunMonitor({
   taskId,
@@ -48,11 +53,17 @@ export function TaskRunMonitor({
 }) {
   const [run, setRun] = useState(initial);
   const [state, action, pending] = useActionState(startAnalysis, {});
+  const [codingState, codingAction, codingPending] = useActionState(
+    startCodingRun,
+    {},
+  );
   const running =
     pending ||
+    codingPending ||
     run?.status === "pending" ||
     run?.status === "running" ||
-    run?.reviewer?.status === "running";
+    run?.reviewer?.status === "running" ||
+    run?.coding?.status === "running";
   useEffect(() => {
     let cancelled = false;
     const refresh = async () => {
@@ -124,19 +135,23 @@ export function TaskRunMonitor({
             <div>
               <b>Durum</b>
               <p>
-                {run.reviewer?.status === "running"
-                  ? "İnceleniyor"
-                  : run.reviewer?.status === "completed"
-                    ? "İnceleme tamamlandı"
-                    : run.reviewer?.status === "failed"
-                      ? "Analiz tamamlandı (İnceleme başarısız)"
-                      : run.status === "completed"
-                        ? "Analiz tamamlandı"
-                        : run.status === "running"
-                          ? "Analiz ediliyor"
-                          : run.status === "pending"
-                            ? "Beklemede"
-                            : "Başarısız"}
+                {run.coding?.status === "running"
+                  ? "Kodlama alanı hazırlanıyor"
+                  : run.coding?.status === "completed"
+                    ? "Workspace hazır"
+                    : run.reviewer?.status === "running"
+                      ? "İnceleniyor"
+                      : run.reviewer?.status === "completed"
+                        ? "İnceleme tamamlandı"
+                        : run.reviewer?.status === "failed"
+                          ? "Analiz tamamlandı (İnceleme başarısız)"
+                          : run.status === "completed"
+                            ? "Analiz tamamlandı"
+                            : run.status === "running"
+                              ? "Analiz ediliyor"
+                              : run.status === "pending"
+                                ? "Beklemede"
+                                : "Başarısız"}
               </p>
             </div>
           </div>
@@ -247,6 +262,126 @@ export function TaskRunMonitor({
                     <b>Confidence:</b> {String(review.confidence)}
                   </p>
                 </>
+              )}
+            </div>
+          )}
+          {result && (
+            <div className="space-y-4 rounded-lg border bg-card p-5 text-sm">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <h3 className="font-semibold">Coding Workspace · Hazırlık</h3>
+                  <p className="text-xs text-muted-foreground">
+                    İzole edilmiş agent branch ve cloud workspace temeli
+                  </p>
+                </div>
+                {run.coding?.status === "completed" && (
+                  <Badge variant="default">✓ Workspace Hazır</Badge>
+                )}
+                {run.coding?.status === "running" && (
+                  <Badge variant="secondary">→ Hazırlanıyor…</Badge>
+                )}
+                {run.coding?.status === "failed" && (
+                  <Badge variant="destructive">✕ Başarısız</Badge>
+                )}
+                {!run.coding && (
+                  <Badge variant="outline">○ Henüz başlamadı</Badge>
+                )}
+              </div>
+
+              {review &&
+                (review.verdict === "needs_revision" ||
+                  review.verdict === "insufficient_context") &&
+                !run.coding && (
+                  <div
+                    role="alert"
+                    className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-400"
+                  >
+                    <b>Dikkat:</b> Kimi incelemesinde revizyon veya ek context
+                    önerildi ({verdictLabels[String(review.verdict)]}). Yine de
+                    kodlama çalışma alanını oluşturabilirsiniz.
+                  </div>
+                )}
+
+              {codingState.error && (
+                <p className="text-sm text-destructive" role="alert">
+                  {codingState.error}
+                </p>
+              )}
+
+              {!run.coding && (
+                <div className="pt-2">
+                  <form action={codingAction}>
+                    <input name="taskId" type="hidden" value={taskId} />
+                    <Button disabled={codingPending}>
+                      {codingPending
+                        ? "Workspace Hazırlanıyor…"
+                        : "Kodlamayı Başlat"}
+                    </Button>
+                  </form>
+                </div>
+              )}
+
+              {run.coding?.status === "running" && (
+                <p role="status" className="text-muted-foreground">
+                  Coding workspace hazırlanıyor... GitHub üzerinde izole çalışma
+                  dalı oluşturuluyor.
+                </p>
+              )}
+
+              {run.coding?.status === "failed" && (
+                <div className="space-y-3">
+                  <p role="alert" className="text-destructive">
+                    {labels[run.coding.errorCode ?? ""] ??
+                      "Kodlama çalışma alanı hazırlanamadı."}
+                  </p>
+                  <form action={codingAction}>
+                    <input name="taskId" type="hidden" value={taskId} />
+                    <Button disabled={codingPending} variant="outline">
+                      {codingPending ? "Hazırlanıyor…" : "Yeniden dene"}
+                    </Button>
+                  </form>
+                </div>
+              )}
+
+              {run.coding?.resultJson && (
+                <div className="space-y-2 rounded-md bg-muted/50 p-3 text-xs">
+                  {(() => {
+                    try {
+                      const meta = JSON.parse(run.coding.resultJson) as {
+                        branch?: string;
+                        baseBranch?: string;
+                        baseSha?: string;
+                        repository?: string;
+                      };
+                      return (
+                        <>
+                          <div className="flex flex-wrap items-center gap-2">
+                            <b>Çalışma Dalı (Branch):</b>
+                            <code className="rounded bg-background px-1.5 py-0.5 font-mono font-semibold text-primary">
+                              {meta.branch}
+                            </code>
+                          </div>
+                          <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+                            <span>
+                              <b>Base Dal:</b> {meta.baseBranch}
+                            </span>
+                            {meta.baseSha && (
+                              <span>(Commit: {meta.baseSha.slice(0, 7)})</span>
+                            )}
+                          </div>
+                          <p className="pt-1 text-muted-foreground">
+                            🛡️ <b>Güvenlik Politikası:</b> Main dalı koruma
+                            altındadır. Agent doğrudan ana dala push yapamaz;
+                            tüm geliştirmeler bu izole çalışma dalında
+                            yürütülür.
+                          </p>
+                        </>
+                      );
+                    } catch {
+                      return null;
+                    }
+                  })()}
+                </div>
               )}
             </div>
           )}

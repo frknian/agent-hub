@@ -48,10 +48,36 @@ export async function latestTaskRun(userId: string, taskId: string) {
         )
         .orderBy(taskRunEvents.createdAt)
     : [];
+  const [coding] = await getDb()
+    .select()
+    .from(taskRuns)
+    .where(
+      and(
+        eq(taskRuns.userId, userId),
+        eq(taskRuns.taskId, taskId),
+        eq(taskRuns.agentRole, "coding"),
+        gte(taskRuns.createdAt, run.createdAt),
+      ),
+    )
+    .orderBy(desc(taskRuns.createdAt))
+    .limit(1);
+  const codingEvents = coding
+    ? await getDb()
+        .select()
+        .from(taskRunEvents)
+        .where(
+          and(
+            eq(taskRunEvents.userId, userId),
+            eq(taskRunEvents.runId, coding.id),
+          ),
+        )
+        .orderBy(taskRunEvents.createdAt)
+    : [];
   return {
     ...run,
     reviewer: reviewer ?? null,
-    events: [...events, ...reviewEvents].sort(
+    coding: coding ?? null,
+    events: [...events, ...reviewEvents, ...codingEvents].sort(
       (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
     ),
   };

@@ -9,6 +9,7 @@ import {
 } from "@/services/providers";
 import { saveAgentSystem } from "@/services/agent-systems";
 import { startTaskExecution } from "@/services/task-execution";
+import { startCodingExecution } from "@/services/coding-execution";
 import {
   agentSystemInput,
   providerCredentialInput,
@@ -43,6 +44,34 @@ export async function startAnalysis(
   }
   revalidatePath(`/tasks/${taskId}`);
   return { success: "Analiz tamamlandı." };
+}
+export async function startCodingRun(
+  _: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const user = await requireUser();
+  const taskId = form.get("taskId");
+  if (typeof taskId !== "string") return { error: "Geçersiz görev." };
+  try {
+    await startCodingExecution(user.id, taskId);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "";
+    if (message === "analysis_missing")
+      return {
+        error: "Kodlama başlatılamadı: Önce Qwen analizi tamamlanmalıdır.",
+      };
+    if (message.startsWith("protected_branch_violation"))
+      return {
+        error: "Güvenlik kuralı: Doğrudan korumalı ana dala yazılamaz.",
+      };
+    if (message === "github_write_permission_denied")
+      return { error: "GitHub repository yazma izni yetersiz." };
+    if (message === "Execution already active")
+      return { error: "Kodlama işlemi zaten çalışıyor." };
+    return { error: "Kodlama çalışma alanı başlatılamadı." };
+  }
+  revalidatePath(`/tasks/${taskId}`);
+  return { success: "Kodlama çalışma alanı hazırlandı." };
 }
 export async function addProject(
   _: FormState,
