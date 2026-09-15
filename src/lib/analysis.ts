@@ -31,38 +31,61 @@ export type ExecutionErrorCode = (typeof executionErrorCodes)[number];
 // Locate one complete JSON object without evaluating or repairing arbitrary text.
 export function parseAnalysisResponse(content: string): AnalysisResult {
   if (content.length > 100_000) throw new SyntaxError("response_too_large");
-  const start = content.indexOf("{");
-  let depth = 0,
-    quoted = false,
-    escaped = false;
-  for (let i = start; start >= 0 && i < content.length; i++) {
-    const char = content[i];
-    if (quoted) {
-      if (escaped) escaped = false;
-      else if (char === "\\") escaped = true;
-      else if (char === '"') quoted = false;
-    } else if (char === '"') quoted = true;
-    else if (char === "{") depth++;
-    else if (char === "}" && --depth === 0) {
-      const data = JSON.parse(content.slice(start, i + 1));
-      if (data && typeof data === "object") {
-        const value = data.confidence;
-        const numeric =
-          typeof value === "number"
-            ? value
-            : typeof value === "string" && /^\s*\d+(?:\.\d+)?%?\s*$/.test(value)
-              ? Number(value.trim().replace(/%$/, ""))
-              : NaN;
-        if (Number.isFinite(numeric) && numeric >= 0 && numeric <= 100)
-          data.confidence =
-            numeric > 1 || (typeof value === "string" && value.includes("%"))
-              ? numeric / 100
-              : numeric;
+  let failure: unknown = new SyntaxError("invalid_json");
+  for (
+    let start = content.indexOf("{"), attempts = 0;
+    start >= 0 && attempts < 32;
+    start = content.indexOf("{", start + 1), attempts++
+  ) {
+    try {
+      let depth = 0,
+        quoted = false,
+        escaped = false;
+      for (let i = start; start >= 0 && i < content.length; i++) {
+        const char = content[i];
+        if (quoted) {
+          if (escaped) escaped = false;
+          else if (char === "\\") escaped = true;
+          else if (char === '"') quoted = false;
+        } else if (char === '"') quoted = true;
+        else if (char === "{") depth++;
+        else if (char === "}" && --depth === 0) {
+          const data = JSON.parse(content.slice(start, i + 1));
+          if (data && typeof data === "object") {
+            const value = data.confidence;
+            const numeric =
+              typeof value === "number"
+                ? value
+                : typeof value === "string" &&
+                    /^\s*\d+(?:\.\d+)?%?\s*$/.test(value)
+                  ? Number(value.trim().replace(/%$/, ""))
+                  : NaN;
+            if (Number.isFinite(numeric) && numeric >= 0 && numeric <= 100)
+              data.confidence =
+                numeric > 1 ||
+                (typeof value === "string" && value.includes("%"))
+                  ? numeric / 100
+                  : numeric;
+          }
+          return analysisResult.parse(data);
+        }
       }
-      return analysisResult.parse(data);
+    } catch (error) {
+      if (error instanceof z.ZodError || !(failure instanceof z.ZodError))
+        failure = error;
     }
   }
-  throw new SyntaxError("invalid_json");
+  throw failure;
+}
+
+function responseFormat(content: string) {
+  return {
+    characters: content.length,
+    containsObject: content.includes("{"),
+    containsSchema: content.includes('"task_type"'),
+    codeFence: content.includes("```"),
+    thinking: content.includes("<think>"),
+  };
 }
 
 export function analysisDiagnostics(error: unknown) {
@@ -84,12 +107,16 @@ export function analysisDiagnostics(error: unknown) {
 export async function validateWithRepair(
   content: string,
   repair: (content: string) => Promise<string>,
-  report: (details: ReturnType<typeof analysisDiagnostics>) => void,
+  report: (
+    details: ReturnType<typeof analysisDiagnostics> & {
+      format?: ReturnType<typeof responseFormat>;
+    },
+  ) => void,
 ): Promise<AnalysisResult> {
   try {
     return parseAnalysisResponse(content);
   } catch (error) {
-    report(analysisDiagnostics(error));
+    report({ ...analysisDiagnostics(error), format: responseFormat(content) });
   }
   // Exactly one repair request, using the same owner-scoped provider.
   try {
