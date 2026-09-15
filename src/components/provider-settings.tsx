@@ -15,6 +15,7 @@ type Credential = {
   keyHint: string;
   status: "untested" | "connected" | "error";
   lastTestedAt: Date | null;
+  baseUrl: string | null;
 };
 export function ProviderSettings({
   credentials,
@@ -102,6 +103,7 @@ function ProviderCard({
               maxLength={1000}
             />
           </label>
+          {provider.id === "qwen" && <label className="block text-sm font-medium">API Host / Base URL<Input className="mt-2" name="baseUrl" type="url" required defaultValue={credential?.baseUrl ?? ""} placeholder="https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1" /><span className="mt-1 block text-xs font-normal text-muted-foreground">Singapore workspace endpoint’i.</span></label>}
           <Button type="submit" disabled={saving}>
             {saving
               ? "Kaydediliyor…"

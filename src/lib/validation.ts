@@ -65,7 +65,8 @@ export const agentRoles = [
 export const providerCredentialInput = z.object({
   provider: z.enum(providerIds),
   apiKey: z.string().trim().min(8, "Geçerli bir API anahtarı girin.").max(1000),
-});
+  baseUrl: z.string().trim().url("Geçerli bir HTTPS API host girin.").max(500).optional().or(z.literal("")),
+}).superRefine((v, ctx) => { if (v.provider === "qwen" && !v.baseUrl) ctx.addIssue({ code: "custom", path: ["baseUrl"], message: "Qwen için API Host gerekli." }); });
 export const agentSystemInput = z
   .object({
     mode: z.enum(["preset", "custom"]),

@@ -4,7 +4,7 @@ import type { ProviderId } from "@/config/agent-presets";
 import { getDb } from "@/db";
 import { providerCredentials } from "@/db/schema";
 import { decryptApiKey, encryptApiKey } from "@/lib/provider-crypto";
-import { getProviderAdapter } from "@/lib/providers";
+import { getProviderAdapter, ProviderConnectionError } from "@/lib/providers";
 import { isMissingRelationError } from "@/lib/database-errors";
 import { providerCredentialInput } from "@/lib/validation";
 
@@ -16,6 +16,7 @@ export async function listProviderCredentials(userId: string) {
         keyHint: providerCredentials.keyHint,
         status: providerCredentials.status,
         lastTestedAt: providerCredentials.lastTestedAt,
+        baseUrl: providerCredentials.baseUrl,
       })
       .from(providerCredentials)
       .where(eq(providerCredentials.userId, userId));
@@ -32,6 +33,7 @@ export async function saveProviderCredential(userId: string, input: unknown) {
     iv: encrypted.iv,
     authTag: encrypted.authTag,
     keyHint: encrypted.keyHint,
+    baseUrl: data.baseUrl || null,
   };
   await getDb()
     .insert(providerCredentials)
@@ -81,7 +83,7 @@ export async function testProviderCredential(
         iv: credential.iv,
         authTag: credential.authTag,
         keyHint: credential.keyHint,
-      }),
+      }), credential.baseUrl,
     );
     await getDb()
       .update(providerCredentials)
@@ -91,12 +93,12 @@ export async function testProviderCredential(
         updatedAt: new Date(),
       })
       .where(eq(providerCredentials.id, credential.id));
-    return "connected" as const;
-  } catch {
+    return { status: "connected" as const };
+  } catch (error) {
     await getDb()
       .update(providerCredentials)
       .set({ status: "error", lastTestedAt: new Date(), updatedAt: new Date() })
       .where(eq(providerCredentials.id, credential.id));
-    return "error" as const;
+    return { status: "error" as const, errorType: error instanceof ProviderConnectionError ? error.type : "unknown" as const };
   }
 }

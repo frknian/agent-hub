@@ -63,6 +63,7 @@ export async function saveProviderKey(
   const data = providerCredentialInput.safeParse({
     provider: form.get("provider"),
     apiKey: form.get("apiKey"),
+    baseUrl: form.get("baseUrl"),
   });
   if (!data.success) return { error: data.error.issues[0].message };
   try {
@@ -93,9 +94,9 @@ export async function testProviderKey(
       provider as (typeof providerIds)[number],
     );
     revalidatePath("/settings/providers");
-    return status === "connected"
+    return status.status === "connected"
       ? { success: "Bağlantı doğrulandı." }
-      : { error: "Bağlantı doğrulanamadı. Anahtarı kontrol edin." };
+      : { error: ({ invalid_key: "API key geçersiz.", endpoint: "Region veya API Host uyuşmuyor.", model_access: "Model erişimi yok.", quota: "Billing veya kota sorunu var.", network: "Ağ hatası oluştu.", unknown: "Sağlayıcı bağlantısı doğrulanamadı." } as const)[status.errorType ?? "unknown"] };
   } catch {
     return { error: "Bağlantı testi tamamlanamadı." };
   }

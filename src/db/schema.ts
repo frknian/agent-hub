@@ -93,6 +93,7 @@ export const providerCredentials = pgTable(
     iv: text("iv").notNull(),
     authTag: text("auth_tag").notNull(),
     keyHint: text("key_hint").notNull(),
+    baseUrl: text("base_url"),
     status: credentialStatus("status").notNull().default("untested"),
     lastTestedAt: timestamp("last_tested_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true })
