@@ -49,6 +49,7 @@ export const codingEventMessages: Record<string, string> = {
   coding_completed: "Kodlama tamamlandı",
   approval_required: "Kritik sistem dosyası değişikliği için onay gerekli",
   coding_conflict: "Branch çakışması tespit edildi",
+  coding_output_invalid: "Qwen kod çıktısı doğrulanamadı",
   coding_failed: "Kodlama başarısız",
 };
 
@@ -277,30 +278,101 @@ export async function startCodingExecution(userId: string, taskId: string) {
       contextPayload,
       credential.baseUrl,
       codingPrompt,
+      { maxTokens: 8192 },
     )) as {
-      choices?: { message?: { content?: string } }[];
+      choices?: {
+        message?: { content?: string };
+        finish_reason?: string;
+      }[];
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
 
-    let patchContent = rawResponse.choices?.[0]?.message?.content ?? "";
-    await event("patch_generated");
+    const choice = rawResponse.choices?.[0];
+    const isTruncated = choice?.finish_reason === "length";
+    let patchContent = choice?.message?.content ?? "";
+    await event("patch_generated", "completed", {
+      isTruncated,
+      completionTokens: rawResponse.usage?.completion_tokens,
+    });
+
+    // Helper function to validate file existence on branch (update must exist, create must not exist)
+    const validateFileOperations = async (changes: CodingResult["changes"]) => {
+      for (const change of changes) {
+        const existing = await readFileFromBranch(
+          owner,
+          repo,
+          branchRes.branch,
+          change.path,
+          token,
+        );
+        if (change.operation === "update" && !existing) {
+          throw new Error(
+            `coding_output_invalid: 'update' target file does not exist on branch: ${change.path}`,
+          );
+        }
+        if (change.operation === "create" && existing) {
+          throw new Error(
+            `coding_output_invalid: 'create' target file already exists on branch: ${change.path}`,
+          );
+        }
+      }
+    };
 
     // 8. Validate patch format with exactly 1 bounded repair
     let codingResult: CodingResult;
     try {
+      if (isTruncated) {
+        throw new Error(
+          "coding_output_invalid: Model output truncated due to output token limit",
+        );
+      }
       codingResult = parseCodingResponse(patchContent);
-    } catch {
-      // One bounded repair attempt
-      const repairResponse = (await getProviderAdapter("qwen").createCompletion(
-        apiKey,
-        modelName,
-        `Reformat the following output into valid JSON schema. Return ONLY valid JSON: {"summary":string,"changes":[{"path":string,"operation":"update"|"create","content":string,"reason":string}],"notes":string[],"risks":string[],"suggested_tests":string[]}. DATA:\n${patchContent.slice(0, 32_000)}`,
-        credential.baseUrl,
-        codingPrompt,
-      )) as typeof rawResponse;
+      await validateFileOperations(codingResult.changes);
+    } catch (firstError) {
+      const errorMsg =
+        firstError instanceof Error ? firstError.message : "Validation error";
 
-      patchContent = repairResponse.choices?.[0]?.message?.content ?? "";
-      codingResult = parseCodingResponse(patchContent);
+      // If forbidden file or branch violation was caught, rethrow immediately
+      if (
+        errorMsg.includes("forbidden_operation") ||
+        errorMsg.includes("protected_branch_violation")
+      ) {
+        throw firstError;
+      }
+
+      // One bounded repair attempt
+      const repairPrompt = `Return ONLY valid JSON matching exactly this schema:
+{"summary":string,"changes":[{"path":string,"operation":"update"|"create","content":string,"reason":string}],"notes":string[],"risks":string[],"suggested_tests":string[]}
+
+CRITICAL RULES:
+1. Return ONLY the JSON object. No Markdown fences, no explanation before or after.
+2. 'operation' must be 'update' (for files that already exist in the repo) or 'create' (for new files).
+3. 'delete' and 'rename' operations are strictly forbidden.
+4. For each change, provide the COMPLETE new file content in 'content'.
+5. VALIDATION ERROR TO REPAIR:
+${errorMsg}
+
+PREVIOUS INVALID RESPONSE:
+${patchContent.slice(0, 20_000)}`;
+
+      try {
+        const repairResponse = (await getProviderAdapter(
+          "qwen",
+        ).createCompletion(
+          apiKey,
+          modelName,
+          repairPrompt,
+          credential.baseUrl,
+          "You are a strict JSON fixer. Output ONLY a valid JSON object conforming to the required schema. No Markdown.",
+          { maxTokens: 8192 },
+        )) as typeof rawResponse;
+
+        patchContent = repairResponse.choices?.[0]?.message?.content ?? "";
+        codingResult = parseCodingResponse(patchContent);
+        await validateFileOperations(codingResult.changes);
+      } catch {
+        throw new Error("coding_output_invalid");
+      }
     }
 
     // 9. File safety policy checks
@@ -449,23 +521,25 @@ export async function startCodingExecution(userId: string, taskId: string) {
     return run.id;
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
-    const errorCode = message.includes("coding_conflict")
-      ? "coding_conflict"
-      : message.startsWith("protected_branch_violation")
-        ? "protected_branch_violation"
-        : message.startsWith("invalid_branch_format")
-          ? "invalid_branch_format"
-          : message.startsWith("Dosya güvenlik kuralı ihlali")
-            ? "forbidden_file_modification"
-            : message === "github_write_credential_missing"
-              ? "github_write_credential_missing"
-              : message === "github_write_permission_denied"
-                ? "github_write_permission_denied"
-                : message === "repository_not_found"
-                  ? "repository_not_found"
-                  : message === "provider_not_connected"
-                    ? "provider_not_connected"
-                    : "coding_failed";
+    const errorCode = message.includes("coding_output_invalid")
+      ? "coding_output_invalid"
+      : message.includes("coding_conflict")
+        ? "coding_conflict"
+        : message.startsWith("protected_branch_violation")
+          ? "protected_branch_violation"
+          : message.startsWith("invalid_branch_format")
+            ? "invalid_branch_format"
+            : message.startsWith("Dosya güvenlik kuralı ihlali")
+              ? "forbidden_file_modification"
+              : message === "github_write_credential_missing"
+                ? "github_write_credential_missing"
+                : message === "github_write_permission_denied"
+                  ? "github_write_permission_denied"
+                  : message === "repository_not_found"
+                    ? "repository_not_found"
+                    : message === "provider_not_connected"
+                      ? "provider_not_connected"
+                      : "coding_failed";
 
     await db
       .update(taskRuns)

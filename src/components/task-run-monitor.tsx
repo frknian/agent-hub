@@ -43,6 +43,8 @@ const labels: Record<string, string> = {
     "GitHub yazma kimlik bilgisi (GITHUB_TOKEN) sunucuda eksik.",
   github_write_permission_denied: "GitHub repository yazma izni yetersiz.",
   coding_workspace_error: "Kodlama çalışma alanı hazırlanamadı.",
+  coding_output_invalid:
+    "Qwen kod çıktısı doğrulanamadı (Model yanıtı beklenen kod değişikliği formatına uymadı).",
 };
 export function TaskRunMonitor({
   taskId,

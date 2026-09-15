@@ -20,6 +20,7 @@ export type ProviderAdapter = {
     input: string,
     baseUrl?: string | null,
     systemPrompt?: string,
+    options?: { maxTokens?: number },
   ): Promise<unknown>;
 };
 export function getProviderAdapter(provider: ProviderId): ProviderAdapter {
@@ -94,7 +95,7 @@ export function getProviderAdapter(provider: ProviderId): ProviderAdapter {
       };
       return body.data?.flatMap((row) => (row.id ? [row.id] : [])) ?? [];
     },
-    async createCompletion(key, model, input, baseUrl, systemPrompt) {
+    async createCompletion(key, model, input, baseUrl, systemPrompt, options) {
       return (
         await request(
           key,
@@ -103,7 +104,7 @@ export function getProviderAdapter(provider: ProviderId): ProviderAdapter {
             method: "POST",
             body: JSON.stringify({
               model,
-              max_tokens: 4096,
+              max_tokens: options?.maxTokens ?? 4096,
               ...(provider === "kimi"
                 ? { thinking: { type: "disabled" } }
                 : {}),

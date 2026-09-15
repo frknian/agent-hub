@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { parseStructuredResponse } from "./analysis";
 
 export const codingFileChangeSchema = z.object({
   path: z
@@ -230,6 +229,161 @@ export function buildCodingContext(input: {
   });
 }
 
+export function normalizeCodingPayload(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    throw new SyntaxError("Model output is not a JSON object");
+  }
+
+  const obj = raw as Record<string, unknown>;
+
+  // 1. summary
+  const summary =
+    typeof obj.summary === "string" && obj.summary.trim().length > 0
+      ? obj.summary.trim()
+      : typeof obj.description === "string" && obj.description.trim().length > 0
+        ? obj.description.trim()
+        : "Kod değişiklikleri uygulandı";
+
+  // 2. notes, risks, suggested_tests
+  const normalizeStringArray = (val: unknown): string[] => {
+    if (!Array.isArray(val)) return [];
+    return val
+      .map((item) =>
+        typeof item === "string" ? item.trim() : String(item ?? ""),
+      )
+      .filter((s) => s.length > 0);
+  };
+
+  const notes = normalizeStringArray(obj.notes);
+  const risks = normalizeStringArray(obj.risks);
+  const suggestedTests = normalizeStringArray(
+    obj.suggested_tests ??
+      obj.suggestedTests ??
+      obj.tests ??
+      obj.test_plan ??
+      obj.suggested_test_cases,
+  );
+
+  // 3. changes
+  const rawChanges =
+    obj.changes ?? obj.files ?? obj.file_changes ?? obj.modifications;
+  if (!Array.isArray(rawChanges) || rawChanges.length === 0) {
+    throw new Error("No file changes provided in model response");
+  }
+
+  const changes = rawChanges.map((change: unknown) => {
+    if (!change || typeof change !== "object") {
+      throw new Error("Invalid change item");
+    }
+    const c = change as Record<string, unknown>;
+
+    // path / file
+    const rawPath = c.path ?? c.file ?? c.filename ?? c.filePath;
+    if (typeof rawPath !== "string" || !rawPath.trim()) {
+      throw new Error("File change missing path");
+    }
+    const path = rawPath.trim().replace(/^\.\//, "");
+
+    // operation
+    const rawOp = String(c.operation ?? "update")
+      .toLowerCase()
+      .trim();
+    if (["delete", "remove", "rename", "move"].includes(rawOp)) {
+      throw new Error(`forbidden_operation: ${rawOp} is not allowed`);
+    }
+
+    let operation: "update" | "create" = "update";
+    if (rawOp === "create" || c.isNew === true || c.created === true) {
+      operation = "create";
+    } else if (rawOp === "update") {
+      operation = "update";
+    }
+
+    // content
+    let content =
+      c.content !== undefined
+        ? String(c.content)
+        : c.code !== undefined
+          ? String(c.code)
+          : "";
+
+    // Strip markdown code fences if model wrapped code inside JSON string
+    if (content.trim().startsWith("```")) {
+      const match = content
+        .trim()
+        .match(/^```(?:[a-zA-Z0-9_-]+)?\r?\n([\s\S]*?)\r?\n```$/);
+      if (match) {
+        content = match[1];
+      }
+    }
+
+    // reason
+    const reason =
+      typeof c.reason === "string" && c.reason.trim().length > 0
+        ? c.reason.trim()
+        : "Kod değişikliği";
+
+    return {
+      path,
+      operation,
+      content,
+      reason,
+    };
+  });
+
+  return {
+    summary,
+    changes,
+    notes,
+    risks,
+    suggested_tests: suggestedTests,
+  };
+}
+
 export function parseCodingResponse(content: string): CodingResult {
-  return parseStructuredResponse(content, codingResultSchema);
+  const trimmed = content.trim();
+  let parsedJson: unknown = null;
+
+  // 1. Pure JSON parse
+  try {
+    parsedJson = JSON.parse(trimmed);
+  } catch {
+    // 2. Extract ```json ... ``` code fence
+    const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    if (fenceMatch) {
+      try {
+        parsedJson = JSON.parse(fenceMatch[1].trim());
+      } catch {
+        // Fall through to step 3
+      }
+    }
+
+    // 3. Extract between first '{' and last '}'
+    if (!parsedJson) {
+      const firstBrace = trimmed.indexOf("{");
+      const lastBrace = trimmed.lastIndexOf("}");
+      if (firstBrace !== -1 && lastBrace > firstBrace) {
+        const candidate = trimmed.slice(firstBrace, lastBrace + 1);
+        try {
+          parsedJson = JSON.parse(candidate);
+        } catch {
+          // Attempt trailing comma cleanup
+          try {
+            const cleaned = candidate.replace(/,\s*([}\]])/g, "$1");
+            parsedJson = JSON.parse(cleaned);
+          } catch {
+            throw new SyntaxError("Failed to parse JSON from model output");
+          }
+        }
+      } else {
+        throw new SyntaxError("No valid JSON object found in model output");
+      }
+    }
+  }
+
+  // 4. Normalize payload
+  const normalized = normalizeCodingPayload(parsedJson);
+
+  // 5. Zod schema validate
+  return codingResultSchema.parse(normalized);
 }

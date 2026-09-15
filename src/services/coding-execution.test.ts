@@ -363,9 +363,10 @@ it("executes coding run, validates safe files, commits to branch, passes token, 
     usage: { prompt_tokens: 150, completion_tokens: 80 },
   });
 
-  workspaceMocks.readFileFromBranch.mockResolvedValueOnce({
-    content: "export const auth = false;",
-    sha: "blob-1",
+  workspaceMocks.readFileFromBranch.mockImplementation(async (o, r, b, p) => {
+    if (p === "src/auth.ts")
+      return { content: "export const auth = false;", sha: "blob-1" };
+    return null;
   });
 
   workspaceMocks.createBranchCommit.mockResolvedValueOnce({
@@ -446,6 +447,378 @@ it("executes coding run, validates safe files, commits to branch, passes token, 
   );
 });
 
+it("recovers via repair pass when first model output is malformed JSON", async () => {
+  dbMocks.limit
+    .mockResolvedValueOnce([
+      {
+        id: taskId,
+        title: "Fix bug",
+        description: "repair test",
+        projectId: "p1",
+        repositoryUrl: "https://github.com/owner/repo",
+      },
+    ])
+    .mockResolvedValueOnce([
+      {
+        id: "primary-run-id",
+        status: "completed",
+        resultJson: JSON.stringify({ summary: "analyzed" }),
+      },
+    ])
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([
+      {
+        id: "cred-1",
+        provider: "qwen",
+        status: "connected",
+        encryptedApiKey: "enc",
+        iv: "iv",
+        authTag: "tag",
+      },
+    ]);
+
+  workspaceMocks.resolveBaseBranch.mockResolvedValueOnce({
+    branch: "main",
+    sha: "base-sha-123456",
+  });
+  workspaceMocks.createCodingBranch.mockResolvedValueOnce({
+    branch: "agent/task-d52fda24-fix-bug",
+    sha: "new-branch-sha-999",
+    created: true,
+  });
+
+  githubPublicMocks.readRepository.mockResolvedValueOnce({ files: [] });
+
+  // First call: returns malformed output
+  providerMocks.createCompletion
+    .mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            content:
+              "Sure, here is the code: { summary: 'bad json missing quotes', changes: [] }",
+          },
+        },
+      ],
+    })
+    // Second call (repair): returns clean valid JSON
+    .mockResolvedValueOnce({
+      choices: [
+        {
+          message: {
+            content: JSON.stringify({
+              summary: "Fixed properly",
+              changes: [
+                {
+                  path: "src/new.ts",
+                  operation: "create",
+                  content: "export const x = 1;",
+                  reason: "add file",
+                },
+              ],
+            }),
+          },
+        },
+      ],
+    });
+
+  workspaceMocks.readFileFromBranch.mockResolvedValue(null);
+  workspaceMocks.createBranchCommit.mockResolvedValueOnce({
+    commitSha: "commit-sha-repair",
+    branch: "agent/task-d52fda24-fix-bug",
+    treeSha: "tree-sha-repair",
+  });
+
+  const runId = await startCodingExecution(userId, taskId);
+  expect(runId).toBe("coding-run-id");
+  expect(providerMocks.createCompletion).toHaveBeenCalledTimes(2);
+  expect(workspaceMocks.createBranchCommit).toHaveBeenCalled();
+});
+
+it("fails with coding_output_invalid when repair pass also fails", async () => {
+  dbMocks.limit
+    .mockResolvedValueOnce([
+      {
+        id: taskId,
+        title: "Fix bug",
+        description: "broken repair",
+        projectId: "p1",
+        repositoryUrl: "https://github.com/owner/repo",
+      },
+    ])
+    .mockResolvedValueOnce([
+      {
+        id: "primary-run-id",
+        status: "completed",
+        resultJson: JSON.stringify({ summary: "analyzed" }),
+      },
+    ])
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([
+      {
+        id: "cred-1",
+        provider: "qwen",
+        status: "connected",
+        encryptedApiKey: "enc",
+        iv: "iv",
+        authTag: "tag",
+      },
+    ]);
+
+  workspaceMocks.resolveBaseBranch.mockResolvedValueOnce({
+    branch: "main",
+    sha: "base-sha-123456",
+  });
+  workspaceMocks.createCodingBranch.mockResolvedValueOnce({
+    branch: "agent/task-d52fda24-fix-bug",
+    sha: "new-branch-sha-999",
+    created: true,
+  });
+
+  githubPublicMocks.readRepository.mockResolvedValueOnce({ files: [] });
+
+  // Both calls return invalid JSON
+  providerMocks.createCompletion
+    .mockResolvedValueOnce({
+      choices: [{ message: { content: "completely invalid 1" } }],
+    })
+    .mockResolvedValueOnce({
+      choices: [{ message: { content: "completely invalid 2" } }],
+    });
+
+  await expect(startCodingExecution(userId, taskId)).rejects.toThrow(
+    "coding_output_invalid",
+  );
+
+  expect(dbMocks.set).toHaveBeenCalledWith(
+    expect.objectContaining({
+      status: "failed",
+      errorCode: "coding_output_invalid",
+    }),
+  );
+});
+
+it("fails with coding_output_invalid when output is truncated due to length limit", async () => {
+  dbMocks.limit
+    .mockResolvedValueOnce([
+      {
+        id: taskId,
+        title: "Fix bug",
+        description: "truncation test",
+        projectId: "p1",
+        repositoryUrl: "https://github.com/owner/repo",
+      },
+    ])
+    .mockResolvedValueOnce([
+      {
+        id: "primary-run-id",
+        status: "completed",
+        resultJson: JSON.stringify({ summary: "analyzed" }),
+      },
+    ])
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([
+      {
+        id: "cred-1",
+        provider: "qwen",
+        status: "connected",
+        encryptedApiKey: "enc",
+        iv: "iv",
+        authTag: "tag",
+      },
+    ]);
+
+  workspaceMocks.resolveBaseBranch.mockResolvedValueOnce({
+    branch: "main",
+    sha: "base-sha-123456",
+  });
+  workspaceMocks.createCodingBranch.mockResolvedValueOnce({
+    branch: "agent/task-d52fda24-fix-bug",
+    sha: "new-branch-sha-999",
+    created: true,
+  });
+
+  githubPublicMocks.readRepository.mockResolvedValueOnce({ files: [] });
+
+  // Model output has finish_reason: "length"
+  providerMocks.createCompletion
+    .mockResolvedValueOnce({
+      choices: [
+        {
+          finish_reason: "length",
+          message: { content: '{"summary": "cut in half...' },
+        },
+      ],
+    })
+    .mockResolvedValueOnce({
+      choices: [
+        {
+          finish_reason: "length",
+          message: { content: '{"still": "cut...' },
+        },
+      ],
+    });
+
+  await expect(startCodingExecution(userId, taskId)).rejects.toThrow(
+    "coding_output_invalid",
+  );
+
+  expect(dbMocks.set).toHaveBeenCalledWith(
+    expect.objectContaining({
+      status: "failed",
+      errorCode: "coding_output_invalid",
+    }),
+  );
+});
+
+it("rejects coding run when 'update' target file does not exist on branch", async () => {
+  dbMocks.limit
+    .mockResolvedValueOnce([
+      {
+        id: taskId,
+        title: "Fix bug",
+        description: "missing file update",
+        projectId: "p1",
+        repositoryUrl: "https://github.com/owner/repo",
+      },
+    ])
+    .mockResolvedValueOnce([
+      {
+        id: "primary-run-id",
+        status: "completed",
+        resultJson: JSON.stringify({ summary: "analyzed" }),
+      },
+    ])
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([
+      {
+        id: "cred-1",
+        provider: "qwen",
+        status: "connected",
+        encryptedApiKey: "enc",
+        iv: "iv",
+        authTag: "tag",
+      },
+    ]);
+
+  workspaceMocks.resolveBaseBranch.mockResolvedValueOnce({
+    branch: "main",
+    sha: "base-sha-123456",
+  });
+  workspaceMocks.createCodingBranch.mockResolvedValueOnce({
+    branch: "agent/task-d52fda24-fix-bug",
+    sha: "new-branch-sha-999",
+    created: true,
+  });
+
+  githubPublicMocks.readRepository.mockResolvedValueOnce({ files: [] });
+
+  // Proposes updating a file that does not exist
+  const payload = JSON.stringify({
+    summary: "Update non-existing",
+    changes: [
+      {
+        path: "src/does-not-exist.ts",
+        operation: "update",
+        content: "export const a = 1;",
+      },
+    ],
+  });
+
+  providerMocks.createCompletion
+    .mockResolvedValueOnce({
+      choices: [{ message: { content: payload } }],
+    })
+    .mockResolvedValueOnce({
+      choices: [{ message: { content: payload } }],
+    });
+
+  // readFileFromBranch returns null (file does not exist)
+  workspaceMocks.readFileFromBranch.mockResolvedValue(null);
+
+  await expect(startCodingExecution(userId, taskId)).rejects.toThrow(
+    "coding_output_invalid",
+  );
+});
+
+it("rejects coding run when 'create' target file already exists on branch", async () => {
+  dbMocks.limit
+    .mockResolvedValueOnce([
+      {
+        id: taskId,
+        title: "Fix bug",
+        description: "existing file create",
+        projectId: "p1",
+        repositoryUrl: "https://github.com/owner/repo",
+      },
+    ])
+    .mockResolvedValueOnce([
+      {
+        id: "primary-run-id",
+        status: "completed",
+        resultJson: JSON.stringify({ summary: "analyzed" }),
+      },
+    ])
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([])
+    .mockResolvedValueOnce([
+      {
+        id: "cred-1",
+        provider: "qwen",
+        status: "connected",
+        encryptedApiKey: "enc",
+        iv: "iv",
+        authTag: "tag",
+      },
+    ]);
+
+  workspaceMocks.resolveBaseBranch.mockResolvedValueOnce({
+    branch: "main",
+    sha: "base-sha-123456",
+  });
+  workspaceMocks.createCodingBranch.mockResolvedValueOnce({
+    branch: "agent/task-d52fda24-fix-bug",
+    sha: "new-branch-sha-999",
+    created: true,
+  });
+
+  githubPublicMocks.readRepository.mockResolvedValueOnce({ files: [] });
+
+  // Proposes creating a file that already exists
+  const payload = JSON.stringify({
+    summary: "Create already existing",
+    changes: [
+      {
+        path: "src/existing.ts",
+        operation: "create",
+        content: "export const a = 1;",
+      },
+    ],
+  });
+
+  providerMocks.createCompletion
+    .mockResolvedValueOnce({
+      choices: [{ message: { content: payload } }],
+    })
+    .mockResolvedValueOnce({
+      choices: [{ message: { content: payload } }],
+    });
+
+  // readFileFromBranch returns existing file
+  workspaceMocks.readFileFromBranch.mockResolvedValue({
+    content: "old",
+    sha: "blob-x",
+  });
+
+  await expect(startCodingExecution(userId, taskId)).rejects.toThrow(
+    "coding_output_invalid",
+  );
+});
+
 it("requires approval and halts commit when critical migration or workflow is modified", async () => {
   dbMocks.limit
     .mockResolvedValueOnce([
@@ -512,6 +885,8 @@ it("requires approval and halts commit when critical migration or workflow is mo
       },
     ],
   });
+
+  workspaceMocks.readFileFromBranch.mockResolvedValue(null);
 
   const insertedEvents: string[] = [];
   dbMocks.values.mockImplementation((vals: Record<string, unknown>) => {
@@ -600,6 +975,11 @@ it("throws and marks run as failed when forbidden file (.env) is targeted", asyn
         },
       },
     ],
+  });
+
+  workspaceMocks.readFileFromBranch.mockResolvedValue({
+    content: "existing",
+    sha: "blob-env",
   });
 
   await expect(startCodingExecution(userId, taskId)).rejects.toThrow(
