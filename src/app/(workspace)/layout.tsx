@@ -1,6 +1,7 @@
 import { requireUser } from "@/lib/auth";
 import { Navigation } from "@/components/navigation";
 import { AuthButton } from "@/components/auth-button";
+import { ThemeSwitcher } from "@/components/theme-switcher";
 export const dynamic = "force-dynamic";
 export default async function Workspace({
   children,
@@ -23,6 +24,7 @@ export default async function Workspace({
             <span className="hidden text-sm text-muted-foreground sm:block">
               {user.name}
             </span>
+            <ThemeSwitcher compact />
             <AuthButton logout />
           </div>
         </header>

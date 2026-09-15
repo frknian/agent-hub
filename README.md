@@ -51,6 +51,10 @@ npm run format:check
 
 Use `npm run build` and `npm start` to test service worker behavior locally. Install via the browser install action on Android/desktop; on iPhone use Share → Add to Home Screen. HTTPS is required outside localhost. Offline shows a generic connectivity page; private data and forms require a connection.
 
+## Appearance
+
+Choose Açık, Koyu, or Sistem from the header or Ayarlar page. The preference is saved in the browser. Sistem follows operating-system changes, and the selected appearance is applied before hydration to avoid a visible theme flash.
+
 Vercel-compatible with standard Next.js defaults. Add `DATABASE_URL`, `NEXTAUTH_URL`, `NEXTAUTH_SECRET`, `GITHUB_CLIENT_ID`, and `GITHUB_CLIENT_SECRET` in the Vercel project settings; these values must never be committed. Apply reviewed migrations separately before enabling the production application.
 
 ## Structure

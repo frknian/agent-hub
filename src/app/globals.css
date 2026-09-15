@@ -18,6 +18,25 @@
   --ring: #2563eb;
   --radius: 0.75rem;
 }
+
+:root.dark {
+  --background: #101827;
+  --foreground: #e5edf8;
+  --card: #172033;
+  --card-foreground: #e5edf8;
+  --primary: #60a5fa;
+  --primary-foreground: #0b1220;
+  --secondary: #263247;
+  --secondary-foreground: #e5edf8;
+  --muted: #1e293b;
+  --muted-foreground: #a7b5c9;
+  --accent: #18355f;
+  --accent-foreground: #bfdbfe;
+  --destructive: #f87171;
+  --border: #334155;
+  --input: #3b4b62;
+  --ring: #60a5fa;
+}
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
