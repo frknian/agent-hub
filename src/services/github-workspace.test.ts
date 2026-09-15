@@ -5,6 +5,8 @@ import {
   resolveBaseBranch,
   checkBranchExists,
   createCodingBranch,
+  readFileFromBranch,
+  createBranchCommit,
   slugify,
 } from "./github-workspace";
 
@@ -125,4 +127,142 @@ it("creates temporary coding branch with mock GitHub API", async () => {
     sha: "created-sha-999",
     created: true,
   });
+});
+
+it("reads file from branch content correctly", async () => {
+  const fileContent = "const x = 1;";
+  const encoded = Buffer.from(fileContent).toString("base64");
+  const fetchMock = vi.fn(async (url: string) => {
+    if (url.includes("/contents/src/index.ts")) {
+      return new Response(
+        JSON.stringify({
+          content: encoded,
+          encoding: "base64",
+          sha: "blob-sha-111",
+        }),
+        { status: 200 },
+      );
+    }
+    return new Response(null, { status: 404 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  const result = await readFileFromBranch(
+    "owner",
+    "repo",
+    "agent/task-123",
+    "src/index.ts",
+  );
+  expect(result).toEqual({ content: fileContent, sha: "blob-sha-111" });
+
+  const missing = await readFileFromBranch(
+    "owner",
+    "repo",
+    "agent/task-123",
+    "missing.ts",
+  );
+  expect(missing).toBeNull();
+});
+
+it("creates branch commit atomically using git data api", async () => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    // 1. Get branch commit
+    if (
+      url.includes("/git/ref/heads/agent%2Ftask-123") ||
+      url.includes("/git/ref/heads/agent/task-123")
+    ) {
+      return new Response(
+        JSON.stringify({ object: { sha: "latest-branch-sha" } }),
+        { status: 200 },
+      );
+    }
+    // 2. Get commit details for tree
+    if (url.includes("/git/commits/latest-branch-sha")) {
+      return new Response(JSON.stringify({ tree: { sha: "base-tree-sha" } }), {
+        status: 200,
+      });
+    }
+    // 3. Post tree
+    if (url.includes("/git/trees") && init?.method === "POST") {
+      return new Response(JSON.stringify({ sha: "new-tree-sha" }), {
+        status: 201,
+      });
+    }
+    // 4. Post commit
+    if (url.includes("/git/commits") && init?.method === "POST") {
+      return new Response(JSON.stringify({ sha: "new-commit-sha" }), {
+        status: 201,
+      });
+    }
+    // 5. Patch branch ref
+    if (
+      url.includes("/git/refs/heads/agent%2Ftask-123") ||
+      url.includes("/git/refs/heads/agent/task-123")
+    ) {
+      return new Response(
+        JSON.stringify({
+          ref: "refs/heads/agent/task-123",
+          object: { sha: "new-commit-sha" },
+        }),
+        { status: 200 },
+      );
+    }
+    return new Response(null, { status: 404 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  const res = await createBranchCommit({
+    owner: "owner",
+    repo: "repo",
+    branch: "agent/task-123",
+    commitMessage: "test: commit",
+    changes: [{ path: "src/test.ts", content: "console.log('hi');" }],
+  });
+
+  expect(res.commitSha).toBe("new-commit-sha");
+  expect(res.branch).toBe("agent/task-123");
+  expect(res.treeSha).toBe("new-tree-sha");
+});
+
+it("detects branch conflict (422) on ref update", async () => {
+  const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+    if (url.includes("/git/ref/heads/") || url.includes("/git/refs/heads/")) {
+      if (init?.method === "PATCH") {
+        return new Response(
+          JSON.stringify({ message: "Update is not a fast forward" }),
+          { status: 422 },
+        );
+      }
+      return new Response(JSON.stringify({ object: { sha: "head-sha" } }), {
+        status: 200,
+      });
+    }
+    if (url.includes("/git/commits/head-sha")) {
+      return new Response(JSON.stringify({ tree: { sha: "tree-sha" } }), {
+        status: 200,
+      });
+    }
+    if (url.includes("/git/trees")) {
+      return new Response(JSON.stringify({ sha: "new-tree-sha" }), {
+        status: 201,
+      });
+    }
+    if (url.includes("/git/commits")) {
+      return new Response(JSON.stringify({ sha: "new-commit-sha" }), {
+        status: 201,
+      });
+    }
+    return new Response(null, { status: 404 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
+
+  await expect(
+    createBranchCommit({
+      owner: "owner",
+      repo: "repo",
+      branch: "agent/task-123",
+      commitMessage: "conflict test",
+      changes: [{ path: "file.txt", content: "hello" }],
+    }),
+  ).rejects.toThrow("coding_conflict");
 });

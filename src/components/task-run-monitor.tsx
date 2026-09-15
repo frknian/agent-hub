@@ -57,6 +57,7 @@ export function TaskRunMonitor({
     startCodingRun,
     {},
   );
+  const [showDiff, setShowDiff] = useState(false);
   const running =
     pending ||
     codingPending ||
@@ -269,16 +270,30 @@ export function TaskRunMonitor({
             <div className="space-y-4 rounded-lg border bg-card p-5 text-sm">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <div>
-                  <h3 className="font-semibold">Coding Workspace · Hazırlık</h3>
+                  <h3 className="font-semibold">Coding Agent · Qwen</h3>
                   <p className="text-xs text-muted-foreground">
-                    İzole edilmiş agent branch ve cloud workspace temeli
+                    Model: {run.coding?.model || "qwen3-coder-next"} · İzole
+                    çalışma dalı ve kod değişiklikleri
                   </p>
                 </div>
-                {run.coding?.status === "completed" && (
-                  <Badge variant="default">✓ Workspace Hazır</Badge>
-                )}
+                {run.coding?.status === "completed" &&
+                  (() => {
+                    try {
+                      const m = run.coding.resultJson
+                        ? JSON.parse(run.coding.resultJson)
+                        : null;
+                      if (m?.status === "approval_required") {
+                        return (
+                          <Badge variant="destructive">⚠️ Onay Gerekiyor</Badge>
+                        );
+                      }
+                    } catch {}
+                    return (
+                      <Badge variant="default">✓ Kodlama Tamamlandı</Badge>
+                    );
+                  })()}
                 {run.coding?.status === "running" && (
-                  <Badge variant="secondary">→ Hazırlanıyor…</Badge>
+                  <Badge variant="secondary">→ Qwen Kodluyor…</Badge>
                 )}
                 {run.coding?.status === "failed" && (
                   <Badge variant="destructive">✕ Başarısız</Badge>
@@ -313,26 +328,26 @@ export function TaskRunMonitor({
                   <form action={codingAction}>
                     <input name="taskId" type="hidden" value={taskId} />
                     <Button disabled={codingPending}>
-                      {codingPending
-                        ? "Workspace Hazırlanıyor…"
-                        : "Kodlamayı Başlat"}
+                      {codingPending ? "Qwen Kodluyor…" : "Kodlamayı Başlat"}
                     </Button>
                   </form>
                 </div>
               )}
 
               {run.coding?.status === "running" && (
-                <p role="status" className="text-muted-foreground">
-                  Coding workspace hazırlanıyor... GitHub üzerinde izole çalışma
-                  dalı oluşturuluyor.
-                </p>
+                <div className="space-y-1 text-muted-foreground">
+                  <p role="status">
+                    Qwen3-Coder-Next çalışıyor... İlgili dosyalar analiz edilip
+                    izole dalda atomik patch hazırlanıyor.
+                  </p>
+                </div>
               )}
 
               {run.coding?.status === "failed" && (
                 <div className="space-y-3">
                   <p role="alert" className="text-destructive">
                     {labels[run.coding.errorCode ?? ""] ??
-                      "Kodlama çalışma alanı hazırlanamadı."}
+                      "Kodlama işlemi tamamlanamadı."}
                   </p>
                   <form action={codingAction}>
                     <input name="taskId" type="hidden" value={taskId} />
@@ -344,38 +359,167 @@ export function TaskRunMonitor({
               )}
 
               {run.coding?.resultJson && (
-                <div className="space-y-2 rounded-md bg-muted/50 p-3 text-xs">
+                <div className="space-y-3">
                   {(() => {
                     try {
                       const meta = JSON.parse(run.coding.resultJson) as {
                         branch?: string;
                         baseBranch?: string;
                         baseSha?: string;
+                        commitSha?: string;
                         repository?: string;
+                        summary?: string;
+                        notes?: string[];
+                        risks?: string[];
+                        suggested_tests?: string[];
+                        changedFiles?: number;
+                        additions?: number;
+                        deletions?: number;
+                        diffs?: {
+                          path: string;
+                          operation: "update" | "create";
+                          additions: number;
+                          deletions: number;
+                          diff: string;
+                        }[];
+                        status?: "completed" | "approval_required";
+                        approvalReason?: string;
                       };
+
+                      if (meta.status === "approval_required") {
+                        return (
+                          <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-4 text-xs">
+                            <b className="text-amber-700 dark:text-amber-400">
+                              ⚠️ İnsan Onayı Gerekiyor
+                            </b>
+                            <p className="mt-1 text-muted-foreground">
+                              {meta.approvalReason ||
+                                "Kritik sistem veya konfigürasyon dosyası değişikliği önerildi."}
+                            </p>
+                            <p className="mt-2 text-muted-foreground">
+                              Güvenlik politikası gereği kritik değişiklikler
+                              kullanıcı onayı olmadan doğrudan dala işlenmez.
+                            </p>
+                          </div>
+                        );
+                      }
+
                       return (
-                        <>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <b>Çalışma Dalı (Branch):</b>
-                            <code className="rounded bg-background px-1.5 py-0.5 font-mono font-semibold text-primary">
-                              {meta.branch}
-                            </code>
+                        <div className="space-y-3">
+                          <div className="rounded-md bg-muted/40 p-3 text-xs space-y-2">
+                            <div className="flex flex-wrap items-center gap-3">
+                              <div>
+                                <b>Branch:</b>{" "}
+                                <code className="rounded bg-background px-1.5 py-0.5 font-mono font-semibold text-primary">
+                                  {meta.branch}
+                                </code>
+                              </div>
+                              {meta.commitSha && (
+                                <div>
+                                  <b>Commit:</b>{" "}
+                                  <code className="rounded bg-background px-1.5 py-0.5 font-mono text-muted-foreground">
+                                    {meta.commitSha.slice(0, 7)}
+                                  </code>
+                                </div>
+                              )}
+                              {meta.changedFiles !== undefined && (
+                                <div>
+                                  <b>Değiştirilen Dosyalar:</b>{" "}
+                                  <span>{meta.changedFiles}</span>{" "}
+                                  <span className="text-emerald-600 dark:text-emerald-400">
+                                    (+{meta.additions ?? 0})
+                                  </span>{" "}
+                                  <span className="text-destructive">
+                                    (-{meta.deletions ?? 0})
+                                  </span>
+                                </div>
+                              )}
+                            </div>
+                            <p className="text-muted-foreground">
+                              🛡️ <b>Güvenlik:</b> Main dalı koruma altındadır.
+                              Değişiklikler yalnızca bu izole çalışma dalına
+                              yazıldı.
+                            </p>
                           </div>
-                          <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
-                            <span>
-                              <b>Base Dal:</b> {meta.baseBranch}
-                            </span>
-                            {meta.baseSha && (
-                              <span>(Commit: {meta.baseSha.slice(0, 7)})</span>
+
+                          {meta.summary && (
+                            <div className="text-xs">
+                              <b>Değişiklik Özeti:</b>
+                              <p className="mt-1 text-muted-foreground">
+                                {meta.summary}
+                              </p>
+                            </div>
+                          )}
+
+                          {meta.diffs && meta.diffs.length > 0 && (
+                            <div className="pt-2">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => setShowDiff(!showDiff)}
+                              >
+                                {showDiff ? "Diff'i Gizle" : "Diff'i Gör"} (
+                                {meta.diffs.length} dosya)
+                              </Button>
+
+                              {showDiff && (
+                                <div className="mt-3 space-y-4">
+                                  {meta.diffs.map((fileDiff) => (
+                                    <div
+                                      key={fileDiff.path}
+                                      className="rounded-md border overflow-hidden text-xs"
+                                    >
+                                      <div className="flex items-center justify-between bg-muted/60 px-3 py-1.5 font-mono font-semibold">
+                                        <span>{fileDiff.path}</span>
+                                        <div className="flex gap-2">
+                                          <span className="text-emerald-600 dark:text-emerald-400 font-bold">
+                                            +{fileDiff.additions}
+                                          </span>
+                                          <span className="text-destructive font-bold">
+                                            -{fileDiff.deletions}
+                                          </span>
+                                        </div>
+                                      </div>
+                                      <pre className="max-h-72 overflow-x-auto overflow-y-auto bg-card p-3 font-mono text-[11px] leading-relaxed">
+                                        {fileDiff.diff
+                                          .split("\n")
+                                          .map((line, idx) => (
+                                            <div
+                                              key={idx}
+                                              className={
+                                                line.startsWith("+")
+                                                  ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300"
+                                                  : line.startsWith("-")
+                                                    ? "bg-destructive/15 text-destructive"
+                                                    : line.startsWith("@@")
+                                                      ? "text-primary/70 font-bold"
+                                                      : "text-muted-foreground"
+                                              }
+                                            >
+                                              {line}
+                                            </div>
+                                          ))}
+                                      </pre>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
+                          {meta.suggested_tests &&
+                            meta.suggested_tests.length > 0 && (
+                              <div className="text-xs">
+                                <b>Önerilen Testler:</b>
+                                <ul className="mt-1 list-disc pl-5 text-muted-foreground">
+                                  {meta.suggested_tests.map((test, index) => (
+                                    <li key={index}>{test}</li>
+                                  ))}
+                                </ul>
+                              </div>
                             )}
-                          </div>
-                          <p className="pt-1 text-muted-foreground">
-                            🛡️ <b>Güvenlik Politikası:</b> Main dalı koruma
-                            altındadır. Agent doğrudan ana dala push yapamaz;
-                            tüm geliştirmeler bu izole çalışma dalında
-                            yürütülür.
-                          </p>
-                        </>
+                        </div>
                       );
                     } catch {
                       return null;
