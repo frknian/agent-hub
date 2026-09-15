@@ -46,16 +46,30 @@ export function TaskRunMonitor({
 }) {
   const [run, setRun] = useState(initial);
   const [state, action, pending] = useActionState(startAnalysis, {});
+  const running =
+    pending || run?.status === "pending" || run?.status === "running";
   useEffect(() => {
-    if (!run || !["pending", "running"].includes(run.status)) return;
-    const timer = setInterval(async () => {
-      const response = await fetch(`/api/tasks/${taskId}/run`, {
-        cache: "no-store",
-      });
-      if (response.ok) setRun(await response.json());
-    }, 2500);
-    return () => clearInterval(timer);
-  }, [run?.status, taskId]);
+    let cancelled = false;
+    const refresh = async () => {
+      try {
+        const response = await fetch(`/api/tasks/${taskId}/run`, {
+          cache: "no-store",
+        });
+        if (response.ok) {
+          const latest = await response.json();
+          if (!cancelled) setRun(latest);
+        }
+      } catch {
+        /* Keep the last confirmed event state on transient network errors. */
+      }
+    };
+    void refresh();
+    const timer = running ? setInterval(refresh, 2500) : undefined;
+    return () => {
+      cancelled = true;
+      if (timer) clearInterval(timer);
+    };
+  }, [running, taskId, state]);
   const result = run?.resultJson
     ? (JSON.parse(run.resultJson) as Record<string, unknown>)
     : null;

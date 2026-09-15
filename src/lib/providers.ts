@@ -14,7 +14,12 @@ export class ProviderConnectionError extends Error {
 export type ProviderAdapter = {
   testConnection(key: string, baseUrl?: string | null): Promise<void>;
   listModels(key: string): Promise<string[]>;
-  createCompletion(key: string, model: string, input: string): Promise<unknown>;
+  createCompletion(
+    key: string,
+    model: string,
+    input: string,
+    baseUrl?: string | null,
+  ): Promise<unknown>;
 };
 export function getProviderAdapter(provider: ProviderId): ProviderAdapter {
   const request = async (
@@ -38,6 +43,8 @@ export function getProviderAdapter(provider: ProviderId): ProviderAdapter {
           ...init?.headers,
         },
         cache: "no-store",
+        signal: AbortSignal.timeout(90_000),
+        redirect: "error",
       });
     } catch {
       throw new ProviderConnectionError("network");
@@ -86,15 +93,22 @@ export function getProviderAdapter(provider: ProviderId): ProviderAdapter {
       };
       return body.data?.flatMap((row) => (row.id ? [row.id] : [])) ?? [];
     },
-    async createCompletion(key, model, input) {
+    async createCompletion(key, model, input, baseUrl) {
       return (
-        await request(key, "chat/completions", {
-          method: "POST",
-          body: JSON.stringify({
-            model,
-            messages: [{ role: "user", content: input }],
-          }),
-        })
+        await request(
+          key,
+          "chat/completions",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              model,
+              max_tokens: 4096,
+              response_format: { type: "json_object" },
+              messages: [{ role: "user", content: input }],
+            }),
+          },
+          baseUrl,
+        )
       ).json();
     },
   };
