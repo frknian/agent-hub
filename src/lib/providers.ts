@@ -1,10 +1,101 @@
 import "server-only";
 import type { ProviderId } from "@/config/agent-presets";
 import { providerCatalog } from "@/config/provider-catalog";
-export type ProviderErrorType = "invalid_key" | "endpoint" | "model_access" | "quota" | "network" | "unknown";
-export class ProviderConnectionError extends Error { constructor(public type: ProviderErrorType, status?: number) { super(`Provider connection failed${status ? ` (${status})` : ""}`); } }
-export type ProviderAdapter = { testConnection(key: string, baseUrl?: string | null): Promise<void>; listModels(key: string): Promise<string[]>; createCompletion(key: string, model: string, input: string): Promise<unknown>; };
+export type ProviderErrorType =
+  "invalid_key" | "endpoint" | "model_access" | "quota" | "network" | "unknown";
+export class ProviderConnectionError extends Error {
+  constructor(
+    public type: ProviderErrorType,
+    status?: number,
+  ) {
+    super(`Provider connection failed${status ? ` (${status})` : ""}`);
+  }
+}
+export type ProviderAdapter = {
+  testConnection(key: string, baseUrl?: string | null): Promise<void>;
+  listModels(key: string): Promise<string[]>;
+  createCompletion(key: string, model: string, input: string): Promise<unknown>;
+};
 export function getProviderAdapter(provider: ProviderId): ProviderAdapter {
-  const request = async (key: string, path: string, init?: RequestInit, baseUrl?: string | null) => { let response: Response; try { const base = (provider === "qwen" && baseUrl ? baseUrl : providerCatalog[provider].baseUrl).replace(/\/$/, ""); response = await fetch(`${base}/${path}`, { ...init, headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json", ...init?.headers }, cache: "no-store" }); } catch { throw new ProviderConnectionError("network"); } if (!response.ok) { const type: ProviderErrorType = response.status === 401 ? "invalid_key" : response.status === 402 || response.status === 429 ? "quota" : response.status === 403 ? "model_access" : response.status === 404 ? "endpoint" : "unknown"; console.error("Provider connection failed", { provider, status: response.status, type }); throw new ProviderConnectionError(type, response.status); } return response; };
-  return { async testConnection(key, baseUrl) { if (provider === "qwen") await request(key, "chat/completions", { method: "POST", body: JSON.stringify({ model: "qwen3-coder-next", messages: [{ role: "user", content: "ping" }], max_tokens: 1 }) }, baseUrl); else await request(key, "models"); }, async listModels(key) { const body = await (await request(key, "models")).json() as { data?: { id?: string }[] }; return body.data?.flatMap((row) => row.id ? [row.id] : []) ?? []; }, async createCompletion(key, model, input) { return (await request(key, "chat/completions", { method: "POST", body: JSON.stringify({ model, messages: [{ role: "user", content: input }] }) })).json(); } };
+  const request = async (
+    key: string,
+    path: string,
+    init?: RequestInit,
+    baseUrl?: string | null,
+  ) => {
+    let response: Response;
+    try {
+      const base = (
+        provider === "qwen" && baseUrl
+          ? baseUrl
+          : providerCatalog[provider].baseUrl
+      ).replace(/\/$/, "");
+      response = await fetch(`${base}/${path}`, {
+        ...init,
+        headers: {
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+          ...init?.headers,
+        },
+        cache: "no-store",
+      });
+    } catch {
+      throw new ProviderConnectionError("network");
+    }
+    if (!response.ok) {
+      const type: ProviderErrorType =
+        response.status === 401
+          ? "invalid_key"
+          : response.status === 402 || response.status === 429
+            ? "quota"
+            : response.status === 403
+              ? "model_access"
+              : response.status === 404
+                ? "endpoint"
+                : "unknown";
+      console.error("Provider connection failed", {
+        provider,
+        status: response.status,
+        type,
+      });
+      throw new ProviderConnectionError(type, response.status);
+    }
+    return response;
+  };
+  return {
+    async testConnection(key, baseUrl) {
+      if (provider === "qwen")
+        await request(
+          key,
+          "chat/completions",
+          {
+            method: "POST",
+            body: JSON.stringify({
+              model: "qwen3-coder-next",
+              messages: [{ role: "user", content: "ping" }],
+              max_tokens: 1,
+            }),
+          },
+          baseUrl,
+        );
+      else await request(key, "models");
+    },
+    async listModels(key) {
+      const body = (await (await request(key, "models")).json()) as {
+        data?: { id?: string }[];
+      };
+      return body.data?.flatMap((row) => (row.id ? [row.id] : [])) ?? [];
+    },
+    async createCompletion(key, model, input) {
+      return (
+        await request(key, "chat/completions", {
+          method: "POST",
+          body: JSON.stringify({
+            model,
+            messages: [{ role: "user", content: input }],
+          }),
+        })
+      ).json();
+    },
+  };
 }

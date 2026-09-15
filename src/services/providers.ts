@@ -83,7 +83,8 @@ export async function testProviderCredential(
         iv: credential.iv,
         authTag: credential.authTag,
         keyHint: credential.keyHint,
-      }), credential.baseUrl,
+      }),
+      credential.baseUrl,
     );
     await getDb()
       .update(providerCredentials)
@@ -99,6 +100,12 @@ export async function testProviderCredential(
       .update(providerCredentials)
       .set({ status: "error", lastTestedAt: new Date(), updatedAt: new Date() })
       .where(eq(providerCredentials.id, credential.id));
-    return { status: "error" as const, errorType: error instanceof ProviderConnectionError ? error.type : "unknown" as const };
+    return {
+      status: "error" as const,
+      errorType:
+        error instanceof ProviderConnectionError
+          ? error.type
+          : ("unknown" as const),
+    };
   }
 }

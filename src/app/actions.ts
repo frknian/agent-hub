@@ -96,7 +96,18 @@ export async function testProviderKey(
     revalidatePath("/settings/providers");
     return status.status === "connected"
       ? { success: "Bağlantı doğrulandı." }
-      : { error: ({ invalid_key: "API key geçersiz.", endpoint: "Region veya API Host uyuşmuyor.", model_access: "Model erişimi yok.", quota: "Billing veya kota sorunu var.", network: "Ağ hatası oluştu.", unknown: "Sağlayıcı bağlantısı doğrulanamadı." } as const)[status.errorType ?? "unknown"] };
+      : {
+          error: (
+            {
+              invalid_key: "API key geçersiz.",
+              endpoint: "Region veya API Host uyuşmuyor.",
+              model_access: "Model erişimi yok.",
+              quota: "Billing veya kota sorunu var.",
+              network: "Ağ hatası oluştu.",
+              unknown: "Sağlayıcı bağlantısı doğrulanamadı.",
+            } as const
+          )[status.errorType ?? "unknown"],
+        };
   } catch {
     return { error: "Bağlantı testi tamamlanamadı." };
   }
