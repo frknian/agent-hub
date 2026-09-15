@@ -12,7 +12,22 @@ Requires Node.js 22.12+ and npm. Install with `npm ci`. Copy `.env.example` to `
 - `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`: a GitHub OAuth App with homepage `http://localhost:3000` and callback `http://localhost:3000/api/auth/callback/github`. Use a separate OAuth App and exact callback for production.
 - `OWNER_GITHUB_ID` (optional): your numeric GitHub ID to restrict sign-in to one owner. Omit to allow multiple independently scoped users.
 - `SEED_GITHUB_ID` (development only): your numeric GitHub ID for seed data.
-  Run `npm run db:migrate` against your development database, then `npm run dev`. Sign in, add a repository URL, open the project, and create a task. The task appears as Sırada on the dashboard. GitHub URLs are stored only, with no repository access.
+
+Run `npm run db:migrate` against your development database, then `npm run dev`. Sign in, add a repository URL, open the project, and create a task. The task appears as Sırada on the dashboard. GitHub URLs are stored only, with no repository access.
+
+## Neon setup
+
+This repository is linked locally with the Neon CLI. The local link metadata and generated database connection variables remain outside source control.
+
+```bash
+neon login
+neon link --project-id <project-id> --branch production -y
+neon config init
+npm run db:migrate
+neon deploy
+```
+
+`neon config init` creates `neon.ts`, which is committed as the project's Neon policy. The local `.env.local` created by the CLI is ignored by Git. Do not copy its values into source files, documentation, or commits.
 
 ## Development seed
 
@@ -35,9 +50,11 @@ npm run format:check
 ## PWA and hosting
 
 Use `npm run build` and `npm start` to test service worker behavior locally. Install via the browser install action on Android/desktop; on iPhone use Share → Add to Home Screen. HTTPS is required outside localhost. Offline shows a generic connectivity page; private data and forms require a connection.
-Vercel-compatible with standard Next.js defaults. Configure server environment variables and apply reviewed migrations separately. No deployment, GitHub write access, or production changes are performed by this milestone.
+
+Vercel-compatible with standard Next.js defaults. Add `DATABASE_URL`, `NEXTAUTH_URL`, `NEXTAUTH_SECRET`, `GITHUB_CLIENT_ID`, and `GITHUB_CLIENT_SECRET` in the Vercel project settings; these values must never be committed. Apply reviewed migrations separately before enabling the production application.
 
 ## Structure
 
 `src/app` routes/actions; `src/components` responsive UI and owned shadcn primitives; `src/services` owner-scoped operations; `src/db` schema/client/seed; `src/config` server environment validation; `src/lib` auth and input rules; `drizzle` committed migrations; `docs` product, architecture, security, and roadmap.
+
 # agent-hub

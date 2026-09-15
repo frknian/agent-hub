@@ -1,0 +1,8 @@
+# Architecture
+
+Next.js App Router with TypeScript strict mode; server components load private data. Small client components handle forms with React action state, navigation, authentication buttons, and service worker registration. Tailwind and owned shadcn components provide the interface.
+Server actions authenticate with NextAuth, validate Zod input, call services, and revalidate the workspace. Services use Drizzle parameterized SQL with Neon HTTP; each read and task creation checks project ownership. No browser database client or secret configuration is exported.
+GitHub OAuth uses encrypted JWT sessions with a one-day lifetime and persists the internal user UUID in the session. OAuth profile upsert uses immutable numeric GitHub ID; tokens are not stored. Optional OWNER_GITHUB_ID restricts admission while ownership remains multi-user compatible.
+Database: users → projects → tasks via UUID foreign keys with cascading deletion. GitHub IDs are unique. Repository URL uniqueness is scoped per user. Timestamps are timezone-aware; future updates must explicitly set updated_at. Task status is a PostgreSQL enum with queued default. Drizzle-generated SQL migrations are committed; deployment never automatically runs them.
+PWA uses a manifest, PNG icons, and a small service worker. Navigations always go to the network; disconnected requests show a generic offline page. Private responses, session routes, and task data are never cached by the worker. Offline task creation is intentionally unsupported.
+Builds do not require live database credentials: environment validation is lazy at private request handling. Protected routes are dynamic. Use the Node runtime and Vercel-compatible Next.js defaults.

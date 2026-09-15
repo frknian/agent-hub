@@ -1,0 +1,7 @@
+# Security
+
+Configure DATABASE_URL, NEXTAUTH_SECRET, GITHUB_CLIENT_ID, and GITHUB_CLIENT_SECRET only on the server. Environment validation errors name fields without printing values. .env files are ignored; .env.example has placeholders only.
+GitHub scope is read:user; no repository or write scopes. NextAuth implements OAuth state and CSRF protection for authentication. Next.js server actions provide same-origin checks for mutations. Require a valid session in the layout, reads, and actions. Never accept user IDs from forms.
+Projects are filtered by session owner. Tasks join projects to enforce owner isolation; task creation checks the project's owner. Invalid and inaccessible IDs return the same unavailable result. Zod constrains UUIDs, text lengths, and canonical HTTPS github.com repository URLs. Drizzle parameterizes SQL and React escapes rendered text.
+Private workspace pages render dynamically and are not placed in the PWA cache. Sign out clears the session; JWTs have a one-day maximum age. JWT sessions do not support immediate per-session server revocation; rotate the secret for emergency global revocation. Restrict owner access through OWNER_GITHUB_ID when desired.
+Run only development migrations/seed yourself. Seed refuses production environments and requires an existing signed-in user. Configure HTTPS in production, a strong random session secret, the exact OAuth callback URL, and managed Neon credentials. No production privileges are granted by this repository.
