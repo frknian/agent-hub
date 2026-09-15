@@ -8,6 +8,7 @@ import {
   testProviderCredential,
 } from "@/services/providers";
 import { saveAgentSystem } from "@/services/agent-systems";
+import { startTaskExecution } from "@/services/task-execution";
 import {
   agentSystemInput,
   providerCredentialInput,
@@ -16,6 +17,7 @@ import {
   taskInput,
 } from "@/lib/validation";
 export type FormState = { error?: string; success?: string };
+export async function startAnalysis(_: FormState, form: FormData): Promise<FormState> { const user = await requireUser(); const taskId = form.get("taskId"); if (typeof taskId !== "string") return { error: "Geçersiz görev." }; try { await startTaskExecution(user.id, taskId); } catch { return { error: "Analiz başlatılamadı." }; } revalidatePath(`/tasks/${taskId}`); return { success: "Analiz tamamlandı." }; }
 export async function addProject(
   _: FormState,
   form: FormData,
