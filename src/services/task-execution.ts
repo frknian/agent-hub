@@ -167,9 +167,14 @@ export async function startTaskExecution(userId: string, taskId: string) {
     let result: AnalysisResult;
     try {
       result = parseAnalysisResponse(raw.choices?.[0]?.message?.content ?? "");
-    } catch {
+    } catch (error) {
       console.error("Analysis response rejected", {
-        reason: "invalid_structured_response",
+        reason:
+          error instanceof SyntaxError ? "invalid_json" : "schema_validation",
+        jsonObject:
+          raw.choices?.[0]?.message?.content?.trim().startsWith("{") === true,
+        containsObject:
+          raw.choices?.[0]?.message?.content?.includes("{") === true,
         truncated: raw.choices?.[0]?.finish_reason === "length",
         empty: !raw.choices?.[0]?.message?.content,
         fenced:
