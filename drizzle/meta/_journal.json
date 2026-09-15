@@ -22,6 +22,13 @@
       "when": 1789479201598,
       "tag": "0002_messy_mikhail_rasputin",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789480917239,
+      "tag": "0003_spotty_trish_tilby",
+      "breakpoints": true
     }
   ]
 }
