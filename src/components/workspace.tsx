@@ -9,7 +9,7 @@ const labels = {
   reviewing: "İnceleniyor",
   testing: "Test ediliyor",
   waiting_approval: "Onay bekliyor",
-  completed: "Tamamlandı",
+  completed: "Analiz tamamlandı",
   failed: "Başarısız",
 };
 export function PageHeading({

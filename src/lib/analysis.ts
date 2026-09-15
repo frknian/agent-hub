@@ -29,7 +29,10 @@ export const executionErrorCodes = [
 export type ExecutionErrorCode = (typeof executionErrorCodes)[number];
 
 // Locate one complete JSON object without evaluating or repairing arbitrary text.
-export function parseAnalysisResponse(content: string): AnalysisResult {
+export function parseStructuredResponse<T>(
+  content: string,
+  schema: z.ZodType<T>,
+): T {
   if (content.length > 100_000) throw new SyntaxError("response_too_large");
   let failure: unknown = new SyntaxError("invalid_json");
   for (
@@ -67,7 +70,7 @@ export function parseAnalysisResponse(content: string): AnalysisResult {
                   ? numeric / 100
                   : numeric;
           }
-          return analysisResult.parse(data);
+          return schema.parse(data);
         }
       }
     } catch (error) {
@@ -125,4 +128,8 @@ export async function validateWithRepair(
     report(analysisDiagnostics(error));
     throw new Error("model_invalid_response");
   }
+}
+
+export function parseAnalysisResponse(content: string): AnalysisResult {
+  return parseStructuredResponse(content, analysisResult);
 }

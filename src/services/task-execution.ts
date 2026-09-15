@@ -13,6 +13,7 @@ import { idInput } from "@/lib/validation";
 import { decryptApiKey } from "@/lib/provider-crypto";
 import { getProviderAdapter, ProviderConnectionError } from "@/lib/providers";
 import { validateWithRepair, type ExecutionErrorCode } from "@/lib/analysis";
+import { reviewTaskRun } from "./task-review";
 import { readRepository } from "./github-public";
 
 const message: Record<string, string> = {
@@ -27,6 +28,7 @@ const message: Record<string, string> = {
   result_validated: "Analiz sonucu doğrulandı",
   run_completed: "Analiz tamamlandı",
   run_failed: "Analiz başarısız",
+  review_failed: "Kimi incelemesi başarısız; Qwen analizi korundu",
 };
 function code(error: unknown): ExecutionErrorCode {
   if (error instanceof ProviderConnectionError)
@@ -208,11 +210,27 @@ export async function startTaskExecution(userId: string, taskId: string) {
             : null,
       })
       .where(eq(taskRuns.id, run.id));
+    await event("run_completed");
     await db
       .update(tasks)
-      .set({ status: "completed", updatedAt: new Date() })
+      .set({ status: "reviewing", updatedAt: new Date() })
       .where(eq(tasks.id, taskId));
-    await event("run_completed");
+    // Review failure must never enter the primary-analysis failure handler.
+    try {
+      await reviewTaskRun(userId, run.id, {
+        task: { title: task.title, description: task.description },
+        repository: { owner: repo.owner, repo: repo.repo, branch: repo.branch },
+        analysis: result,
+        files: repo.files,
+      });
+    } catch {
+      await event("review_failed", "failed", { errorCode: "reviewer_failed" });
+    } finally {
+      await db
+        .update(tasks)
+        .set({ status: "completed", updatedAt: new Date() })
+        .where(eq(tasks.id, taskId));
+    }
     return run.id;
   } catch (error) {
     const errorCode = code(error);

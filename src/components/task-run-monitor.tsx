@@ -2,6 +2,7 @@
 import { useActionState, useEffect, useState } from "react";
 import { startAnalysis } from "@/app/actions";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 type Run = {
   id: string;
   status: "pending" | "running" | "completed" | "failed";
@@ -15,6 +16,7 @@ type Run = {
   estimatedCost: string | null;
   resultJson: string | null;
   errorCode: string | null;
+  reviewer?: Omit<Run, "events" | "reviewer"> | null;
   events: {
     id: string;
     eventType: string;
@@ -47,7 +49,10 @@ export function TaskRunMonitor({
   const [run, setRun] = useState(initial);
   const [state, action, pending] = useActionState(startAnalysis, {});
   const running =
-    pending || run?.status === "pending" || run?.status === "running";
+    pending ||
+    run?.status === "pending" ||
+    run?.status === "running" ||
+    run?.reviewer?.status === "running";
   useEffect(() => {
     let cancelled = false;
     const refresh = async () => {
@@ -73,6 +78,14 @@ export function TaskRunMonitor({
   const result = run?.resultJson
     ? (JSON.parse(run.resultJson) as Record<string, unknown>)
     : null;
+  const review = run?.reviewer?.resultJson
+    ? (JSON.parse(run.reviewer.resultJson) as Record<string, unknown>)
+    : null;
+  const verdictLabels: Record<string, string> = {
+    approve: "Approve — Onay",
+    needs_revision: "Needs Revision — Revizyon gerekli",
+    insufficient_context: "Insufficient Context — Yetersiz context",
+  };
   return (
     <section className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -110,7 +123,21 @@ export function TaskRunMonitor({
             </div>
             <div>
               <b>Durum</b>
-              <p>{run.status}</p>
+              <p>
+                {run.reviewer?.status === "running"
+                  ? "İnceleniyor"
+                  : run.reviewer?.status === "completed"
+                    ? "İnceleme tamamlandı"
+                    : run.reviewer?.status === "failed"
+                      ? "Analiz tamamlandı (İnceleme başarısız)"
+                      : run.status === "completed"
+                        ? "Analiz tamamlandı"
+                        : run.status === "running"
+                          ? "Analiz ediliyor"
+                          : run.status === "pending"
+                            ? "Beklemede"
+                            : "Başarısız"}
+              </p>
             </div>
           </div>
           <ol className="space-y-3 border-l pl-5">
@@ -140,7 +167,8 @@ export function TaskRunMonitor({
           )}
           {result && (
             <div className="space-y-4 rounded-lg border p-5 text-sm">
-              <h3 className="font-semibold">Analiz Özeti</h3>
+              <h3 className="font-semibold">Primary Analysis · Qwen</h3>
+              <b>Analiz Özeti</b>
               <p>{String(result.summary ?? "")}</p>
               {[
                 ["Root Causes", "root_causes"],
@@ -159,6 +187,67 @@ export function TaskRunMonitor({
               <p>
                 <b>Confidence:</b> {String(result.confidence ?? "")}
               </p>
+            </div>
+          )}
+          {run.reviewer && (
+            <div className="space-y-4 rounded-lg border bg-card p-5 text-sm">
+              <h3 className="font-semibold">Reviewer · Kimi</h3>
+              <p className="text-muted-foreground">{run.reviewer.model}</p>
+              {run.reviewer.status === "running" && (
+                <p role="status">İnceleme sürüyor…</p>
+              )}
+              {run.reviewer.status === "failed" && (
+                <p role="alert" className="text-destructive">
+                  reviewer_failed ·{" "}
+                  {run.reviewer.errorCode === "reviewer_provider_missing"
+                    ? "Kimi sağlayıcısı bağlı değil."
+                    : run.reviewer.errorCode === "reviewer_invalid_response"
+                      ? "Kimi geçerli inceleme sonucu döndürmedi."
+                      : "Kimi incelemesi tamamlanamadı."}{" "}
+                  Qwen analiziniz korunuyor.
+                </p>
+              )}
+              {review && (
+                <>
+                  <div className="flex items-center gap-2">
+                    <b>Verdict:</b>
+                    <Badge
+                      variant={
+                        review.verdict === "approve"
+                          ? "default"
+                          : review.verdict === "needs_revision"
+                            ? "destructive"
+                            : "secondary"
+                      }
+                    >
+                      {verdictLabels[String(review.verdict)] ??
+                        String(review.verdict)}
+                    </Badge>
+                  </div>
+                  {[
+                    ["Güçlü yönler", "strengths"],
+                    ["Zayıf yönler", "weaknesses"],
+                    ["Atlanan sorunlar", "missed_issues"],
+                    ["Önerilen değişiklikler", "recommended_changes"],
+                  ].map(([label, key]) => (
+                    <div key={key}>
+                      <b>{label}</b>
+                      <ul className="list-disc pl-5">
+                        {(review[key] as string[]).map((item, index) => (
+                          <li key={index}>{item}</li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                  <p>
+                    <b>Risk değerlendirmesi:</b>{" "}
+                    {String(review.risk_assessment)}
+                  </p>
+                  <p>
+                    <b>Confidence:</b> {String(review.confidence)}
+                  </p>
+                </>
+              )}
             </div>
           )}
         </>
