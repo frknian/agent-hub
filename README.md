@@ -4,7 +4,7 @@ Milestone 1: GitHub sign-in → project → persisted queued task → dashboard 
 
 ## Local setup
 
-Requires Node.js 22.12+ and npm. Install with `npm ci`. Copy `.env.example` to `.env.local` and configure:
+Requires Node.js 22.12+ and npm. Install with `npm ci`. Create `.env.local` locally and configure:
 
 - `DATABASE_URL`: a development Neon PostgreSQL connection string with SSL.
 - `NEXTAUTH_URL`: `http://localhost:3000` locally; your HTTPS origin when hosting.
