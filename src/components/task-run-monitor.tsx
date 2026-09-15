@@ -63,11 +63,15 @@ export function TaskRunMonitor({
     <section className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-lg font-semibold">Analiz yürütmesi</h2>
-        {queued && !run && (
+        {((queued && !run) || run?.status === "failed") && (
           <form action={action}>
             <input name="taskId" type="hidden" value={taskId} />
             <Button disabled={pending}>
-              {pending ? "Başlatılıyor…" : "Analizi Başlat"}
+              {pending
+                ? "Başlatılıyor…"
+                : run?.status === "failed"
+                  ? "Yeniden dene"
+                  : "Analizi Başlat"}
             </Button>
           </form>
         )}
