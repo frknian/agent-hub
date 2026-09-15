@@ -28,10 +28,74 @@ export const executionErrorCodes = [
 ] as const;
 export type ExecutionErrorCode = (typeof executionErrorCodes)[number];
 
-// Some compatible endpoints wrap JSON in a Markdown code block.
-// Unwrap only a complete block; never repair or accept partial model output.
+// Locate one complete JSON object without evaluating or repairing arbitrary text.
 export function parseAnalysisResponse(content: string): AnalysisResult {
-  const trimmed = content.trim();
-  const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n```$/i.exec(trimmed);
-  return analysisResult.parse(JSON.parse(fenced ? fenced[1] : trimmed));
+  if (content.length > 100_000) throw new SyntaxError("response_too_large");
+  const start = content.indexOf("{");
+  let depth = 0,
+    quoted = false,
+    escaped = false;
+  for (let i = start; start >= 0 && i < content.length; i++) {
+    const char = content[i];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (char === "\\") escaped = true;
+      else if (char === '"') quoted = false;
+    } else if (char === '"') quoted = true;
+    else if (char === "{") depth++;
+    else if (char === "}" && --depth === 0) {
+      const data = JSON.parse(content.slice(start, i + 1));
+      if (data && typeof data === "object") {
+        const value = data.confidence;
+        const numeric =
+          typeof value === "number"
+            ? value
+            : typeof value === "string" && /^\s*\d+(?:\.\d+)?%?\s*$/.test(value)
+              ? Number(value.trim().replace(/%$/, ""))
+              : NaN;
+        if (Number.isFinite(numeric) && numeric >= 0 && numeric <= 100)
+          data.confidence =
+            numeric > 1 || (typeof value === "string" && value.includes("%"))
+              ? numeric / 100
+              : numeric;
+      }
+      return analysisResult.parse(data);
+    }
+  }
+  throw new SyntaxError("invalid_json");
+}
+
+export function analysisDiagnostics(error: unknown) {
+  return error instanceof z.ZodError
+    ? {
+        reason: "schema_validation",
+        issues: error.issues.map((issue) => ({
+          field:
+            typeof issue.path[0] === "string" &&
+            issue.path[0] in analysisResult.shape
+              ? issue.path[0]
+              : "response",
+          code: issue.code,
+        })),
+      }
+    : { reason: "invalid_json", issues: [] };
+}
+
+export async function validateWithRepair(
+  content: string,
+  repair: (content: string) => Promise<string>,
+  report: (details: ReturnType<typeof analysisDiagnostics>) => void,
+): Promise<AnalysisResult> {
+  try {
+    return parseAnalysisResponse(content);
+  } catch (error) {
+    report(analysisDiagnostics(error));
+  }
+  // Exactly one repair request, using the same owner-scoped provider.
+  try {
+    return parseAnalysisResponse(await repair(content.slice(0, 32_000)));
+  } catch (error) {
+    report(analysisDiagnostics(error));
+    throw new Error("model_invalid_response");
+  }
 }
