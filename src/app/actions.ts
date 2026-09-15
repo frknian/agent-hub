@@ -26,7 +26,19 @@ export async function startAnalysis(
   if (typeof taskId !== "string") return { error: "Geçersiz görev." };
   try {
     await startTaskExecution(user.id, taskId);
-  } catch {
+  } catch (error) {
+    const type =
+      error && typeof error === "object" && "type" in error
+        ? error.type
+        : undefined;
+    const message = error instanceof Error ? error.message : "";
+    if (type === "invalid_key")
+      return { error: "Qwen API key geçersiz veya bu endpoint için yetkisiz." };
+    if (type === "quota")
+      return { error: "Qwen kota veya billing sınırına ulaştı." };
+    if (type === "network") return { error: "Qwen endpoint’ine ulaşılamadı." };
+    if (message === "provider_not_connected")
+      return { error: "Qwen sağlayıcısı bağlı değil." };
     return { error: "Analiz başlatılamadı." };
   }
   revalidatePath(`/tasks/${taskId}`);
