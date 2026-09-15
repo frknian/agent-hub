@@ -27,3 +27,11 @@ export const executionErrorCodes = [
   "execution_timeout",
 ] as const;
 export type ExecutionErrorCode = (typeof executionErrorCodes)[number];
+
+// Some compatible endpoints wrap JSON in a Markdown code block.
+// Unwrap only a complete block; never repair or accept partial model output.
+export function parseAnalysisResponse(content: string): AnalysisResult {
+  const trimmed = content.trim();
+  const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n```$/i.exec(trimmed);
+  return analysisResult.parse(JSON.parse(fenced ? fenced[1] : trimmed));
+}

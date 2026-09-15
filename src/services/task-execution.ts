@@ -12,7 +12,11 @@ import { getAgentSystem } from "./agent-systems";
 import { idInput } from "@/lib/validation";
 import { decryptApiKey } from "@/lib/provider-crypto";
 import { getProviderAdapter, ProviderConnectionError } from "@/lib/providers";
-import { analysisResult, type ExecutionErrorCode } from "@/lib/analysis";
+import {
+  parseAnalysisResponse,
+  type AnalysisResult,
+  type ExecutionErrorCode,
+} from "@/lib/analysis";
 import { readRepository } from "./github-public";
 
 const message: Record<string, string> = {
@@ -160,22 +164,16 @@ export async function startTaskExecution(userId: string, taskId: string) {
       usage?: { prompt_tokens?: number; completion_tokens?: number };
     };
     await event("model_response_received");
-    let decoded: unknown;
+    let result: AnalysisResult;
     try {
-      decoded = JSON.parse(raw.choices?.[0]?.message?.content ?? "");
+      result = parseAnalysisResponse(raw.choices?.[0]?.message?.content ?? "");
     } catch {
       console.error("Analysis response rejected", {
-        reason: "invalid_json",
+        reason: "invalid_structured_response",
         truncated: raw.choices?.[0]?.finish_reason === "length",
         empty: !raw.choices?.[0]?.message?.content,
-      });
-      throw new Error("model_invalid_response");
-    }
-    const parsed = analysisResult.safeParse(decoded);
-    if (!parsed.success) {
-      console.error("Analysis response rejected", {
-        reason: "schema_validation",
-        issueCodes: parsed.error.issues.map((issue) => issue.code),
+        fenced:
+          raw.choices?.[0]?.message?.content?.trim().startsWith("```") === true,
       });
       throw new Error("model_invalid_response");
     }
@@ -185,7 +183,7 @@ export async function startTaskExecution(userId: string, taskId: string) {
       .set({
         status: "completed",
         completedAt: new Date(),
-        resultJson: JSON.stringify(parsed.data),
+        resultJson: JSON.stringify(result),
         inputTokens: raw.usage?.prompt_tokens?.toString() ?? null,
         outputTokens: raw.usage?.completion_tokens?.toString() ?? null,
       })
