@@ -29,7 +29,15 @@ export default async function Task({
           </p>
         </CardContent>
       </Card>
-      <Card><CardContent className="p-6"><TaskRunMonitor taskId={task.id} queued={task.status === "queued"} initial={run ? JSON.parse(JSON.stringify(run)) : null} /></CardContent></Card>
+      <Card>
+        <CardContent className="p-6">
+          <TaskRunMonitor
+            taskId={task.id}
+            queued={task.status === "queued"}
+            initial={run ? JSON.parse(JSON.stringify(run)) : null}
+          />
+        </CardContent>
+      </Card>
     </>
   );
 }

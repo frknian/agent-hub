@@ -156,10 +156,65 @@ export const agentRoleConfigs = pgTable(
   ],
 );
 
-export const runStatus = pgEnum("run_status", ["pending", "running", "completed", "failed"]);
-export const taskRuns = pgTable("task_runs", {
-  id: uuid("id").primaryKey().defaultRandom(), taskId: uuid("task_id").notNull().references(() => tasks.id, { onDelete: "cascade" }), userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }), agentRole: text("agent_role").notNull(), provider: providerType("provider").notNull(), model: text("model").notNull(), status: runStatus("status").notNull().default("pending"), startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(), completedAt: timestamp("completed_at", { withTimezone: true }), inputTokens: text("input_tokens"), outputTokens: text("output_tokens"), estimatedCost: text("estimated_cost"), resultJson: text("result_json"), errorCode: text("error_code"), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [index("task_runs_task_idx").on(t.taskId), index("task_runs_user_idx").on(t.userId)]);
-export const taskRunEvents = pgTable("task_run_events", {
-  id: uuid("id").primaryKey().defaultRandom(), runId: uuid("run_id").notNull().references(() => taskRuns.id, { onDelete: "cascade" }), userId: uuid("user_id").notNull().references(() => users.id, { onDelete: "cascade" }), eventType: text("event_type").notNull(), step: text("step").notNull(), status: runStatus("status").notNull(), message: text("message").notNull(), metadataJson: text("metadata_json"), createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
-}, (t) => [index("task_run_events_run_idx").on(t.runId), index("task_run_events_user_idx").on(t.userId)]);
+export const runStatus = pgEnum("run_status", [
+  "pending",
+  "running",
+  "completed",
+  "failed",
+]);
+export const taskRuns = pgTable(
+  "task_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    taskId: uuid("task_id")
+      .notNull()
+      .references(() => tasks.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    agentRole: text("agent_role").notNull(),
+    provider: providerType("provider").notNull(),
+    model: text("model").notNull(),
+    status: runStatus("status").notNull().default("pending"),
+    startedAt: timestamp("started_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    inputTokens: text("input_tokens"),
+    outputTokens: text("output_tokens"),
+    estimatedCost: text("estimated_cost"),
+    resultJson: text("result_json"),
+    errorCode: text("error_code"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("task_runs_task_idx").on(t.taskId),
+    index("task_runs_user_idx").on(t.userId),
+  ],
+);
+export const taskRunEvents = pgTable(
+  "task_run_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .notNull()
+      .references(() => taskRuns.id, { onDelete: "cascade" }),
+    userId: uuid("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    eventType: text("event_type").notNull(),
+    step: text("step").notNull(),
+    status: runStatus("status").notNull(),
+    message: text("message").notNull(),
+    metadataJson: text("metadata_json"),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    index("task_run_events_run_idx").on(t.runId),
+    index("task_run_events_user_idx").on(t.userId),
+  ],
+);
