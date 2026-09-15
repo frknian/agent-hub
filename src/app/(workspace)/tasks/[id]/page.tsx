@@ -4,6 +4,8 @@ import { ownedTask } from "@/services/projects";
 import { idInput } from "@/lib/validation";
 import { PageHeading, TaskList } from "@/components/workspace";
 import { Card, CardContent } from "@/components/ui/card";
+import { TaskRunMonitor } from "@/components/task-run-monitor";
+import { latestTaskRun } from "@/services/task-runs";
 export default async function Task({
   params,
 }: {
@@ -14,6 +16,7 @@ export default async function Task({
   if (!idInput.safeParse(id).success) notFound();
   const task = await ownedTask(user.id, id);
   if (!task) notFound();
+  const run = await latestTaskRun(user.id, task.id);
   return (
     <>
       <PageHeading title={task.title} description={task.projectName} />
@@ -26,6 +29,7 @@ export default async function Task({
           </p>
         </CardContent>
       </Card>
+      <Card><CardContent className="p-6"><TaskRunMonitor taskId={task.id} queued={task.status === "queued"} initial={run ? JSON.parse(JSON.stringify(run)) : null} /></CardContent></Card>
     </>
   );
 }
