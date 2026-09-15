@@ -65,3 +65,6 @@ it("project lookup and task listing include owner predicates", async () => {
   expect(listing.sql).toContain('"projects"."user_id"');
   expect(listing.params).toContain("owner");
 });
+it("returns an empty workspace safely when a user has no projects or tasks", async () => {
+  expect(await listTasks("new-user")).toEqual([]);
+});

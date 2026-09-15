@@ -5,18 +5,24 @@ import { getDb } from "@/db";
 import { providerCredentials } from "@/db/schema";
 import { decryptApiKey, encryptApiKey } from "@/lib/provider-crypto";
 import { getProviderAdapter } from "@/lib/providers";
+import { isMissingRelationError } from "@/lib/database-errors";
 import { providerCredentialInput } from "@/lib/validation";
 
 export async function listProviderCredentials(userId: string) {
-  return getDb()
-    .select({
-      provider: providerCredentials.provider,
-      keyHint: providerCredentials.keyHint,
-      status: providerCredentials.status,
-      lastTestedAt: providerCredentials.lastTestedAt,
-    })
-    .from(providerCredentials)
-    .where(eq(providerCredentials.userId, userId));
+  try {
+    return await getDb()
+      .select({
+        provider: providerCredentials.provider,
+        keyHint: providerCredentials.keyHint,
+        status: providerCredentials.status,
+        lastTestedAt: providerCredentials.lastTestedAt,
+      })
+      .from(providerCredentials)
+      .where(eq(providerCredentials.userId, userId));
+  } catch (error) {
+    if (isMissingRelationError(error)) return [];
+    throw error;
+  }
 }
 export async function saveProviderCredential(userId: string, input: unknown) {
   const data = providerCredentialInput.parse(input);

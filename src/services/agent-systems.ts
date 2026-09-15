@@ -12,6 +12,15 @@ import {
   providerCredentials,
 } from "@/db/schema";
 import { agentSystemInput } from "@/lib/validation";
+import { isMissingRelationError } from "@/lib/database-errors";
+
+function defaultSystem() {
+  return {
+    mode: "preset" as const,
+    premiumApproval: "manual" as const,
+    roles: [...BALANCED_DEVELOPER_PRESET.roles],
+  };
+}
 
 export function validateConnectedProviders(
   roles: readonly AgentRoute[],
@@ -20,30 +29,30 @@ export function validateConnectedProviders(
   return roles.every((role) => connected.includes(role.provider));
 }
 export async function getAgentSystem(userId: string) {
-  const [system] = await getDb()
-    .select()
-    .from(agentSystems)
-    .where(eq(agentSystems.userId, userId))
-    .limit(1);
-  if (!system)
+  try {
+    const [system] = await getDb()
+      .select()
+      .from(agentSystems)
+      .where(eq(agentSystems.userId, userId))
+      .limit(1);
+    if (!system) return defaultSystem();
+    const roles = await getDb()
+      .select({
+        role: agentRoleConfigs.role,
+        provider: agentRoleConfigs.provider,
+        model: agentRoleConfigs.model,
+      })
+      .from(agentRoleConfigs)
+      .where(eq(agentRoleConfigs.systemId, system.id));
     return {
-      mode: "preset" as const,
-      premiumApproval: "manual" as const,
-      roles: [...BALANCED_DEVELOPER_PRESET.roles],
+      mode: system.mode,
+      premiumApproval: system.premiumApproval,
+      roles: roles.length ? roles : [...BALANCED_DEVELOPER_PRESET.roles],
     };
-  const roles = await getDb()
-    .select({
-      role: agentRoleConfigs.role,
-      provider: agentRoleConfigs.provider,
-      model: agentRoleConfigs.model,
-    })
-    .from(agentRoleConfigs)
-    .where(eq(agentRoleConfigs.systemId, system.id));
-  return {
-    mode: system.mode,
-    premiumApproval: system.premiumApproval,
-    roles: roles.length ? roles : [...BALANCED_DEVELOPER_PRESET.roles],
-  };
+  } catch (error) {
+    if (isMissingRelationError(error)) return defaultSystem();
+    throw error;
+  }
 }
 export async function saveAgentSystem(userId: string, input: unknown) {
   const data = agentSystemInput.parse(input);
