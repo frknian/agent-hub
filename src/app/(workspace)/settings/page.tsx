@@ -1,6 +1,7 @@
 import { ThemeSwitcher } from "@/components/theme-switcher";
 import { PageHeading } from "@/components/workspace";
 import { Card, CardContent } from "@/components/ui/card";
+import Link from "next/link";
 export default function Page() {
   return (
     <>
@@ -16,6 +17,36 @@ export default function Page() {
               </p>
             </div>
             <ThemeSwitcher />
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="space-y-3 p-6">
+            <h2 className="font-semibold">AI sağlayıcıları</h2>
+            <p className="text-sm text-muted-foreground">
+              Qwen, Kimi ve OpenAI anahtarlarını yalnızca sizin hesabınıza bağlı
+              olarak saklayın.
+            </p>
+            <Link
+              className="text-sm font-medium text-primary hover:underline"
+              href="/settings/providers"
+            >
+              Sağlayıcıları yönet
+            </Link>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="space-y-3 p-6">
+            <h2 className="font-semibold">Agent sistemi</h2>
+            <p className="text-sm text-muted-foreground">
+              Balanced Developer yönlendirmesini veya kendi rol yapılandırmanızı
+              seçin.
+            </p>
+            <Link
+              className="text-sm font-medium text-primary hover:underline"
+              href="/settings/agent-system"
+            >
+              Agent sistemini ayarla
+            </Link>
           </CardContent>
         </Card>
         <Card>

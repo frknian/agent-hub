@@ -2,7 +2,19 @@
 import { revalidatePath } from "next/cache";
 import { requireUser } from "@/lib/auth";
 import { createProject, createTask } from "@/services/projects";
-import { projectInput, taskInput } from "@/lib/validation";
+import {
+  removeProviderCredential,
+  saveProviderCredential,
+  testProviderCredential,
+} from "@/services/providers";
+import { saveAgentSystem } from "@/services/agent-systems";
+import {
+  agentSystemInput,
+  providerCredentialInput,
+  providerIds,
+  projectInput,
+  taskInput,
+} from "@/lib/validation";
 export type FormState = { error?: string; success?: string };
 export async function addProject(
   _: FormState,
@@ -41,4 +53,91 @@ export async function addTask(
   }
   revalidatePath("/", "layout");
   return { success: "Görev sıraya eklendi." };
+}
+
+export async function saveProviderKey(
+  _: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const user = await requireUser();
+  const data = providerCredentialInput.safeParse({
+    provider: form.get("provider"),
+    apiKey: form.get("apiKey"),
+  });
+  if (!data.success) return { error: data.error.issues[0].message };
+  try {
+    await saveProviderCredential(user.id, data.data);
+  } catch {
+    return { error: "Anahtar güvenli biçimde kaydedilemedi." };
+  }
+  revalidatePath("/settings/providers");
+  revalidatePath("/agents");
+  return {
+    success: "Anahtar kaydedildi. Bağlantıyı şimdi test edebilirsiniz.",
+  };
+}
+export async function testProviderKey(
+  _: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const user = await requireUser();
+  const provider = form.get("provider");
+  if (
+    typeof provider !== "string" ||
+    !providerIds.includes(provider as (typeof providerIds)[number])
+  )
+    return { error: "Geçersiz sağlayıcı." };
+  try {
+    const status = await testProviderCredential(
+      user.id,
+      provider as (typeof providerIds)[number],
+    );
+    revalidatePath("/settings/providers");
+    return status === "connected"
+      ? { success: "Bağlantı doğrulandı." }
+      : { error: "Bağlantı doğrulanamadı. Anahtarı kontrol edin." };
+  } catch {
+    return { error: "Bağlantı testi tamamlanamadı." };
+  }
+}
+export async function deleteProviderKey(
+  _: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const user = await requireUser();
+  const provider = form.get("provider");
+  if (
+    typeof provider !== "string" ||
+    !providerIds.includes(provider as (typeof providerIds)[number])
+  )
+    return { error: "Geçersiz sağlayıcı." };
+  await removeProviderCredential(
+    user.id,
+    provider as (typeof providerIds)[number],
+  );
+  revalidatePath("/settings/providers");
+  revalidatePath("/settings/agent-system");
+  revalidatePath("/agents");
+  return { success: "Sağlayıcı anahtarı kaldırıldı." };
+}
+export async function saveAgentSettings(
+  _: FormState,
+  form: FormData,
+): Promise<FormState> {
+  const user = await requireUser();
+  const raw = form.get("settings");
+  try {
+    const parsed = agentSystemInput.parse(
+      typeof raw === "string" ? JSON.parse(raw) : null,
+    );
+    await saveAgentSystem(user.id, parsed);
+  } catch {
+    return {
+      error:
+        "Ayarlar kaydedilemedi. Bağlı sağlayıcıları ve seçimleri kontrol edin.",
+    };
+  }
+  revalidatePath("/settings/agent-system");
+  revalidatePath("/agents");
+  return { success: "Agent sistemi kaydedildi." };
 }

@@ -54,3 +54,39 @@ export const taskInput = z.object({
   description: z.string().trim().max(10000),
 });
 export const idInput = z.string().uuid();
+
+export const providerIds = ["qwen", "kimi", "openai"] as const;
+export const agentRoles = [
+  "primary",
+  "reviewer",
+  "fallback",
+  "premium",
+] as const;
+export const providerCredentialInput = z.object({
+  provider: z.enum(providerIds),
+  apiKey: z.string().trim().min(8, "Geçerli bir API anahtarı girin.").max(1000),
+});
+export const agentSystemInput = z
+  .object({
+    mode: z.enum(["preset", "custom"]),
+    premiumApproval: z.enum(["manual", "disabled"]),
+    roles: z
+      .array(
+        z.object({
+          role: z.enum(agentRoles),
+          provider: z.enum(providerIds),
+          model: z.string().trim().min(1).max(160),
+        }),
+      )
+      .length(4),
+  })
+  .superRefine((value, ctx) => {
+    if (
+      new Set(value.roles.map((role) => role.role)).size !== agentRoles.length
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Her agent rolü bir kez yapılandırılmalıdır.",
+      });
+    }
+  });

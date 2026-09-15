@@ -2,6 +2,12 @@
 
 Milestone 1: GitHub sign-in → project → persisted queued task → dashboard status. Next.js App Router, strict TypeScript, Tailwind, shadcn/ui, Neon PostgreSQL, Drizzle, NextAuth GitHub OAuth, Zod, and Vitest. No AI execution or repository write access.
 
+## BYOK provider settings
+
+Users can connect their own Qwen/Alibaba, Kimi/Moonshot, and OpenAI API keys from Settings. Add `PROVIDER_KEYS_ENCRYPTION_KEY` only to the server environment as a Base64-encoded, random 32-byte value. API keys are encrypted with AES-256-GCM before storage and are never returned to the browser. Generate this value locally with `openssl rand -base64 32`; do not commit it.
+
+The default **Balanced Developer** configuration records the intended routing order: Qwen3-Coder-Next, then Kimi K2.5, then GPT-5.6 Sol. Premium model use remains manual approval. These settings do not execute agents or make repository changes.
+
 ## Local setup
 
 Requires Node.js 22.12+ and npm. Install with `npm ci`. Create `.env.local` locally and configure:
